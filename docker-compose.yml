@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  ai-cs-manager:
+    build: .
+    container_name: ai-cs-manager
+    ports:
+      - "8600:8600"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Shanghai
