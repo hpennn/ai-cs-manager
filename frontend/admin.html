@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI客服管理系统</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: system-ui, -apple-system, sans-serif; background: #0f0f1a; color: #e0e0e0; min-width: 1024px; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #1a1a2e; }
+        ::-webkit-scrollbar-thumb { background: #4f46e5; border-radius: 3px; }
+        .gradient-bg { background: linear-gradient(135deg, #4f46e5, #7c3aed); }
+        .card-gradient-1 { background: linear-gradient(135deg, #4f46e5, #6366f1); }
+        .card-gradient-2 { background: linear-gradient(135deg, #7c3aed, #8b5cf6); }
+        .card-gradient-3 { background: linear-gradient(135deg, #2563eb, #3b82f6); }
+        .card-gradient-4 { background: linear-gradient(135deg, #059669, #10b981); }
+        .nav-item { transition: all 0.2s ease; }
+        .nav-item:hover { background: rgba(79, 70, 229, 0.15); }
+        .nav-item.active { background: rgba(79, 70, 229, 0.25); border-right: 3px solid #4f46e5; }
+        .fade-in { animation: fadeIn 0.3s ease; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        .spinner { border: 3px solid rgba(255,255,255,0.1); border-top-color: #4f46e5; border-radius: 50%; width: 28px; height: 28px; animation: spin 0.8s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .msg-bubble { max-width: 70%; padding: 10px 14px; border-radius: 12px; word-wrap: break-word; line-height: 1.5; }
+        .msg-user { background: #4f46e5; color: #fff; margin-left: auto; border-bottom-right-radius: 4px; }
+        .msg-ai { background: #2a2a3e; color: #d1d5db; margin-right: auto; border-bottom-left-radius: 4px; }
+        .toast { position: fixed; top: 20px; right: 20px; padding: 12px 20px; border-radius: 8px; z-index: 9999; animation: slideIn 0.3s ease; }
+        @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+    </style>
+</head>
+<body>
+
+<div x-data="adminApp()" x-init="init()" class="flex h-screen overflow-hidden">
+
+    <!-- Toast 通知 -->
+    <template x-if="toast.show">
+        <div class="toast" :class="toast.type === 'success' ? 'bg-green-600' : 'bg-red-600'" x-text="toast.msg"
+             x-transition @click="toast.show = false"></div>
+    </template>
+
+    <!-- 左侧导航栏 -->
+    <aside class="w-[220px] flex-shrink-0 flex flex-col" style="background: #1a1a2e;">
+        <!-- Logo -->
+        <div class="p-5 border-b border-gray-700/50">
+            <div class="flex items-center gap-3">
+                <div class="w-9 h-9 rounded-lg gradient-bg flex items-center justify-center text-white font-bold text-sm">AI</div>
+                <div>
+                    <div class="text-sm font-semibold text-white">AI客服管理</div>
+                    <div class="text-xs text-gray-400">控制台 v1.0</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 菜单 -->
+        <nav class="flex-1 py-3 overflow-y-auto">
+            <template x-for="item in menuItems" :key="item.id">
+                <button class="nav-item w-full flex items-center gap-3 px-5 py-3 text-sm text-left"
+                        :class="currentTab === item.id ? 'active text-white' : 'text-gray-400'"
+                        @click="switchTab(item.id)">
+                    <span class="text-lg" x-text="item.icon"></span>
+                    <span x-text="item.label"></span>
+                </button>
+            </template>
+        </nav>
+
+        <!-- 底部 -->
+        <div class="p-4 border-t border-gray-700/50 text-xs text-gray-500 text-center">
+            AI Customer Service Manager
+        </div>
+    </aside>
+
+    <!-- 右侧内容区 -->
+    <div class="flex-1 flex flex-col overflow-hidden">
+        <!-- 顶部栏 -->
+        <header class="h-14 flex items-center justify-between px-6 border-b border-gray-700/30 flex-shrink-0" style="background: #12121f;">
+            <h1 class="text-base font-semibold text-white" x-text="menuItems.find(m => m.id === currentTab)?.label || ''"></h1>
+            <div class="flex items-center gap-4">
+                <span class="text-xs text-gray-400" x-show="backendStatus" x-text="backendStatus"></span>
+                <div class="w-2 h-2 rounded-full" :class="backendOnline ? 'bg-green-400' : 'bg-red-400'"></div>
+            </div>
+        </header>
+
+        <!-- 内容区 -->
+        <main class="flex-1 overflow-y-auto p-6" style="background: #0f0f1a;">
+
+            <!-- 模块1：数据概览 -->
+            <div x-show="currentTab === 'overview'" class="fade-in">
+                <div x-show="loading" class="flex justify-center py-20"><div class="spinner"></div></div>
+                <template x-if="!loading">
+                    <div>
+                        <!-- 统计卡片 -->
+                        <div class="grid grid-cols-4 gap-5 mb-8">
+                            <div class="card-gradient-1 rounded-xl p-5 text-white">
+                                <div class="text-3xl font-bold mb-1" x-text="stats.total_sessions ?? 0"></div>
+                                <div class="text-sm opacity-80">总会话数</div>
+                            </div>
+                            <div class="card-gradient-2 rounded-xl p-5 text-white">
+                                <div class="text-3xl font-bold mb-1" x-text="stats.total_messages ?? 0"></div>
+                                <div class="text-sm opacity-80">总消息数</div>
+                            </div>
+                            <div class="card-gradient-3 rounded-xl p-5 text-white">
+                                <div class="text-3xl font-bold mb-1" x-text="stats.today_messages ?? 0"></div>
+                                <div class="text-sm opacity-80">今日消息数</div>
+                            </div>
+                            <div class="card-gradient-4 rounded-xl p-5 text-white">
+                                <div class="text-3xl font-bold mb-1">
+                                    <span x-text="stats.avg_response_time != null ? stats.avg_response_time : '-'"></span>
+                                    <span class="text-lg font-normal" x-show="stats.avg_response_time != null">s</span>
+                                </div>
+                                <div class="text-sm opacity-80">平均响应时间</div>
+                            </div>
+                        </div>
+
+                        <!-- 概览说明 -->
+                        <div class="rounded-xl p-6" style="background: #1a1a2e;">
+                            <h3 class="text-base font-semibold text-white mb-3">系统状态</h3>
+                            <div class="grid grid-cols-2 gap-4 text-sm">
+                                <div class="flex items-center gap-2">
+                                    <span class="w-2 h-2 rounded-full bg-green-400"></span>
+                                    <span class="text-gray-400">后端服务：</span>
+                                    <span :class="backendOnline ? 'text-green-400' : 'text-red-400'" x-text="backendOnline ? '运行中' : '离线'"></span>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <span class="w-2 h-2 rounded-full bg-blue-400"></span>
+                                    <span class="text-gray-400">API地址：</span>
+                                    <span class="text-gray-300" x-text="API_BASE"></span>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <span class="w-2 h-2 rounded-full bg-purple-400"></span>
+                                    <span class="text-gray-400">知识库文档：</span>
+                                    <span class="text-gray-300" x-text="stats.total_knowledge ?? '-'"></span>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <span class="w-2 h-2 rounded-full bg-yellow-400"></span>
+                                    <span class="text-gray-400">FAQ条目：</span>
+                                    <span class="text-gray-300" x-text="stats.total_faq ?? '-'"></span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+            </div>
+
+            <!-- 模块2：会话管理 -->
+            <div x-show="currentTab === 'sessions'" class="fade-in flex h-full -mt-2 -mx-2">
+                <!-- 会话列表 -->
+                <div class="w-[300px] flex-shrink-0 flex flex-col border-r border-gray-700/30" style="background: #12121f;">
+                    <div class="p-3 border-b border-gray-700/30">
+                        <button @click="loadSessions()" class="w-full py-2 text-sm rounded-lg gradient-bg text-white hover:opacity-90 transition">
+                            刷新列表
+                        </button>
+                    </div>
+                    <div class="flex-1 overflow-y-auto">
+                        <div x-show="sessionLoading" class="flex justify-center py-10"><div class="spinner"></div></div>
+                        <div x-show="!sessionLoading && sessions.length === 0" class="text-center py-10 text-gray-500 text-sm">
+                            暂无会话记录
+                        </div>
+                        <template x-for="s in sessions" :key="s.session_id">
+                            <button class="w-full text-left px-4 py-3 border-b border-gray-700/20 hover:bg-white/5 transition"
+                                    :class="selectedSession === s.session_id ? 'bg-white/10' : ''"
+                                    @click="selectSession(s.session_id)">
+                                <div class="flex items-center justify-between mb-1">
+                                    <span class="text-xs text-gray-400 truncate max-w-[180px]" x-text="s.session_id"></span>
+                                    <span class="text-xs text-gray-500" x-text="s.message_count + '条'"></span>
+                                </div>
+                                <div class="text-xs text-gray-500" x-text="s.last_message_time ? formatTime(s.last_message_time) : ''"></div>
+                            </button>
+                        </template>
+                    </div>
+                </div>
+
+                <!-- 对话详情 -->
+                <div class="flex-1 flex flex-col">
+                    <div x-show="!selectedSession" class="flex-1 flex items-center justify-center text-gray-500 text-sm">
+                        ← 请选择一个会话查看详情
+                    </div>
+                    <template x-if="selectedSession">
+                        <div class="flex-1 flex flex-col">
+                            <!-- 会话头部 -->
+                            <div class="px-4 py-3 border-b border-gray-700/30 flex items-center gap-2" style="background: #12121f;">
+                                <span class="text-sm text-gray-400">会话：</span>
+                                <span class="text-sm text-white truncate" x-text="selectedSession"></span>
+                            </div>
+
+                            <!-- 消息列表 -->
+                            <div class="flex-1 overflow-y-auto p-4 space-y-3" x-ref="messageContainer">
+                                <div x-show="messagesLoading" class="flex justify-center py-10"><div class="spinner"></div></div>
+                                <div x-show="!messagesLoading && messages.length === 0" class="text-center py-10 text-gray-500 text-sm">
+                                    暂无消息记录
+                                </div>
+                                <template x-for="msg in messages" :key="msg.id || Math.random()">
+                                    <div class="flex" :class="msg.role === 'user' ? 'justify-end' : 'justify-start'">
+                                        <div class="msg-bubble" :class="msg.role === 'user' ? 'msg-user' : 'msg-ai'">
+                                            <div x-text="msg.content"></div>
+                                            <div class="text-xs mt-1 opacity-50" x-text="msg.role === 'user' ? '用户' : 'AI客服'"></div>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+
+                            <!-- 输入区域 -->
+                            <div class="p-3 border-t border-gray-700/30 flex gap-2" style="background: #12121f;">
+                                <input type="text" x-model="replyText" @keydown.enter="sendReply()"
+                                       placeholder="输入管理员回复..."
+                                       class="flex-1 px-4 py-2 rounded-lg text-sm text-white outline-none focus:ring-2 focus:ring-indigo-500"
+                                       style="background: #2a2a3e; border: 1px solid transparent;">
+                                <button @click="sendReply()" :disabled="!replyText.trim() || sendingReply"
+                                        class="px-5 py-2 rounded-lg text-sm text-white gradient-bg hover:opacity-90 transition disabled:opacity-50">
+                                    <span x-show="!sendingReply">发送</span>
+                                    <span x-show="sendingReply">发送中...</span>
+                                </button>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+
+            <!-- 模块3：知识库 -->
+            <div x-show="currentTab === 'knowledge'" class="fade-in">
+                <!-- 上传区域 -->
+                <div class="rounded-xl p-6 mb-6" style="background: #1a1a2e;">
+                    <h3 class="text-base font-semibold text-white mb-4">上传文档</h3>
+                    <div class="border-2 border-dashed border-gray-600 rounded-xl p-8 text-center cursor-pointer hover:border-indigo-500 transition"
+                         @dragover.prevent="uploadDragover = true"
+                         @dragleave="uploadDragover = false"
+                         @drop.prevent="handleFileDrop($event)"
+                         :class="uploadDragover ? 'border-indigo-500 bg-indigo-500/10' : ''"
+                         @click="$refs.fileInput.click()">
+                        <input type="file" x-ref="fileInput" class="hidden" accept=".txt,.pdf,.docx" @change="handleFileSelect($event)" multiple>
+                        <div class="text-4xl mb-3">📄</div>
+                        <div class="text-sm text-gray-400">拖拽文件到此处，或 <span class="text-indigo-400 underline">点击选择文件</span></div>
+                        <div class="text-xs text-gray-500 mt-2">支持 txt / pdf / docx 格式</div>
+                    </div>
+                    <!-- 上传进度 -->
+                    <div x-show="uploading" class="mt-4 flex items-center gap-3">
+                        <div class="spinner" style="width:20px;height:20px;border-width:2px;"></div>
+                        <span class="text-sm text-gray-400" x-text="'正在上传: ' + uploadingName"></span>
+                    </div>
+                </div>
+
+                <!-- 文档列表 -->
+                <div class="rounded-xl" style="background: #1a1a2e;">
+                    <div class="flex items-center justify-between p-5 border-b border-gray-700/30">
+                        <h3 class="text-base font-semibold text-white">文档列表</h3>
+                        <button @click="loadKnowledge()" class="text-sm text-indigo-400 hover:text-indigo-300 transition">刷新</button>
+                    </div>
+                    <div x-show="knowledgeLoading" class="flex justify-center py-10"><div class="spinner"></div></div>
+                    <div x-show="!knowledgeLoading && knowledgeList.length === 0" class="text-center py-10 text-gray-500 text-sm">
+                        知识库为空，请上传文档
+                    </div>
+                    <table x-show="!knowledgeLoading && knowledgeList.length > 0" class="w-full">
+                        <thead>
+                            <tr class="text-xs text-gray-400 border-b border-gray-700/30">
+                                <th class="text-left px-5 py-3 font-medium">文档名称</th>
+                                <th class="text-left px-5 py-3 font-medium">类型</th>
+                                <th class="text-left px-5 py-3 font-medium">分块数</th>
+                                <th class="text-left px-5 py-3 font-medium">创建时间</th>
+                                <th class="text-right px-5 py-3 font-medium">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <template x-for="doc in knowledgeList" :key="doc.doc_id">
+                                <tr class="border-b border-gray-700/20 hover:bg-white/5 transition">
+                                    <td class="px-5 py-3 text-sm text-white" x-text="doc.filename || doc.name || '-'"></td>
+                                    <td class="px-5 py-3 text-sm text-gray-400" x-text="doc.file_type || doc.type || '-'"></td>
+                                    <td class="px-5 py-3 text-sm text-gray-400" x-text="doc.chunks ?? '-'"></td>
+                                    <td class="px-5 py-3 text-sm text-gray-400" x-text="doc.created_at ? formatTime(doc.created_at) : '-'"></td>
+                                    <td class="px-5 py-3 text-right">
+                                        <button @click="deleteKnowledge(doc.doc_id)" class="text-xs text-red-400 hover:text-red-300 transition px-2 py-1 rounded hover:bg-red-500/10">
+                                            删除
+                                        </button>
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 模块4：FAQ管理 -->
+            <div x-show="currentTab === 'faq'" class="fade-in">
+                <!-- 添加FAQ -->
+                <div class="rounded-xl p-6 mb-6" style="background: #1a1a2e;">
+                    <h3 class="text-base font-semibold text-white mb-4">添加 FAQ</h3>
+                    <div class="space-y-3">
+                        <input type="text" x-model="faqForm.question" placeholder="输入问题..."
+                               class="w-full px-4 py-2.5 rounded-lg text-sm text-white outline-none focus:ring-2 focus:ring-indigo-500"
+                               style="background: #2a2a3e; border: 1px solid #333;">
+                        <textarea x-model="faqForm.answer" placeholder="输入答案..." rows="3"
+                                  class="w-full px-4 py-2.5 rounded-lg text-sm text-white outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
+                                  style="background: #2a2a3e; border: 1px solid #333;"></textarea>
+                        <button @click="addFaq()" :disabled="!faqForm.question.trim() || !faqForm.answer.trim() || addingFaq"
+                                class="px-6 py-2 rounded-lg text-sm text-white gradient-bg hover:opacity-90 transition disabled:opacity-50">
+                            <span x-show="!addingFaq">添加 FAQ</span>
+                            <span x-show="addingFaq">添加中...</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- FAQ列表 -->
+                <div class="rounded-xl" style="background: #1a1a2e;">
+                    <div class="flex items-center justify-between p-5 border-b border-gray-700/30">
+                        <h3 class="text-base font-semibold text-white">FAQ 列表</h3>
+                        <button @click="loadFaq()" class="text-sm text-indigo-400 hover:text-indigo-300 transition">刷新</button>
+                    </div>
+                    <div x-show="faqLoading" class="flex justify-center py-10"><div class="spinner"></div></div>
+                    <div x-show="!faqLoading && faqList.length === 0" class="text-center py-10 text-gray-500 text-sm">
+                        暂无FAQ，请添加常见问题
+                    </div>
+                    <div class="divide-y divide-gray-700/20">
+                        <template x-for="(faq, index) in faqList" :key="faq.id || index">
+                            <div class="border-b border-gray-700/20 last:border-0">
+                                <button class="w-full flex items-center justify-between px-5 py-4 text-left hover:bg-white/5 transition"
+                                        @click="toggleFaq(index)">
+                                    <div class="flex items-center gap-3 flex-1 min-w-0">
+                                        <span class="text-indigo-400 text-sm font-mono" x-text="'Q' + (index + 1)"></span>
+                                        <span class="text-sm text-white truncate" x-text="faq.question"></span>
+                                    </div>
+                                    <div class="flex items-center gap-2 flex-shrink-0">
+                                        <button @click.stop="deleteFaq(faq.id)" class="text-xs text-red-400 hover:text-red-300 transition px-2 py-1 rounded hover:bg-red-500/10">
+                                            删除
+                                        </button>
+                                        <span class="text-gray-500 transition-transform text-xs" :class="expandedFaq === index ? 'rotate-180' : ''">▼</span>
+                                    </div>
+                                </button>
+                                <div x-show="expandedFaq === index" x-collapse class="px-5 pb-4">
+                                    <div class="pl-8 text-sm text-gray-400 leading-relaxed" x-text="faq.answer"></div>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 模块5：系统设置 -->
+            <div x-show="currentTab === 'settings'" class="fade-in">
+                <div class="rounded-xl p-6 mb-6" style="background: #1a1a2e;">
+                    <h3 class="text-base font-semibold text-white mb-6">基本设置</h3>
+                    <div x-show="settingsLoading" class="flex justify-center py-6"><div class="spinner"></div></div>
+                    <div x-show="!settingsLoading" class="space-y-5">
+                        <!-- API Key -->
+                        <div>
+                            <label class="block text-sm text-gray-400 mb-2">通义千问 API Key</label>
+                            <div class="relative">
+                                <input :type="showApiKey ? 'text' : 'password'" x-model="configForm.api_key"
+                                       placeholder="请输入通义千问 API Key"
+                                       class="w-full px-4 py-2.5 rounded-lg text-sm text-white outline-none focus:ring-2 focus:ring-indigo-500 pr-20"
+                                       style="background: #2a2a3e; border: 1px solid #333;">
+                                <button @click="showApiKey = !showApiKey"
+                                        class="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-indigo-400 hover:text-indigo-300 px-2 py-1 rounded">
+                                    <span x-text="showApiKey ? '隐藏' : '显示'"></span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- 客服角色设定 -->
+                        <div>
+                            <label class="block text-sm text-gray-400 mb-2">客服角色设定</label>
+                            <textarea x-model="configForm.system_prompt" placeholder="设定AI客服的角色和行为..." rows="4"
+                                      class="w-full px-4 py-2.5 rounded-lg text-sm text-white outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
+                                      style="background: #2a2a3e; border: 1px solid #333;"></textarea>
+                        </div>
+
+                        <!-- 欢迎语 -->
+                        <div>
+                            <label class="block text-sm text-gray-400 mb-2">欢迎语</label>
+                            <input type="text" x-model="configForm.welcome_message" placeholder="用户首次进入时的欢迎消息"
+                                   class="w-full px-4 py-2.5 rounded-lg text-sm text-white outline-none focus:ring-2 focus:ring-indigo-500"
+                                   style="background: #2a2a3e; border: 1px solid #333;">
+                        </div>
+
+                        <!-- 公司名称 -->
+                        <div>
+                            <label class="block text-sm text-gray-400 mb-2">公司名称</label>
+                            <input type="text" x-model="configForm.company_name" placeholder="您的公司名称"
+                                   class="w-full px-4 py-2.5 rounded-lg text-sm text-white outline-none focus:ring-2 focus:ring-indigo-500"
+                                   style="background: #2a2a3e; border: 1px solid #333;">
+                        </div>
+
+                        <!-- 保存按钮 -->
+                        <button @click="saveConfig()" :disabled="savingConfig"
+                                class="px-8 py-2.5 rounded-lg text-sm text-white gradient-bg hover:opacity-90 transition disabled:opacity-50">
+                            <span x-show="!savingConfig">保存设置</span>
+                            <span x-show="savingConfig">保存中...</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Widget嵌入代码 -->
+                <div class="rounded-xl p-6" style="background: #1a1a2e;">
+                    <h3 class="text-base font-semibold text-white mb-4">Widget 嵌入代码</h3>
+                    <p class="text-sm text-gray-400 mb-4">将以下代码添加到您的网站页面中，即可嵌入客服聊天窗口：</p>
+                    <div class="relative">
+                        <pre class="rounded-lg p-4 text-sm overflow-x-auto" style="background: #0f0f1a; border: 1px solid #333;"><code class="text-green-400">&lt;script src="http://localhost:8600/widget/chat-widget.js"&gt;&lt;/script&gt;</code></pre>
+                        <button @click="copyEmbedCode()" class="absolute top-3 right-3 px-3 py-1 rounded text-xs text-white gradient-bg hover:opacity-90 transition">
+                            <span x-text="embedCopied ? '已复制 ✓' : '复制代码'"></span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+        </main>
+    </div>
+</div>
+
+<script>
+function adminApp() {
+    return {
+        // 基础配置
+        API_BASE: 'http://localhost:8600',
+        currentTab: 'overview',
+        loading: false,
+        backendOnline: false,
+        backendStatus: '检测中...',
+
+        // 通知
+        toast: { show: false, msg: '', type: 'success' },
+
+        // 菜单
+        menuItems: [
+            { id: 'overview', label: '数据概览', icon: '📊' },
+            { id: 'sessions', label: '会话管理', icon: '💬' },
+            { id: 'knowledge', label: '知识库', icon: '📚' },
+            { id: 'faq', label: 'FAQ管理', icon: '❓' },
+            { id: 'settings', label: '系统设置', icon: '⚙️' },
+        ],
+
+        // 数据概览
+        stats: {},
+
+        // 会话管理
+        sessions: [],
+        sessionLoading: false,
+        selectedSession: null,
+        messages: [],
+        messagesLoading: false,
+        replyText: '',
+        sendingReply: false,
+
+        // 知识库
+        knowledgeList: [],
+        knowledgeLoading: false,
+        uploading: false,
+        uploadingName: '',
+        uploadDragover: false,
+
+        // FAQ
+        faqList: [],
+        faqLoading: false,
+        faqForm: { question: '', answer: '' },
+        addingFaq: false,
+        expandedFaq: null,
+
+        // 系统设置
+        configForm: { api_key: '', system_prompt: '', welcome_message: '', company_name: '' },
+        settingsLoading: false,
+        savingConfig: false,
+        showApiKey: false,
+        embedCopied: false,
+
+        // 初始化
+        init() {
+            this.checkBackend();
+            this.loadStats();
+        },
+
+        // 显示通知
+        showToast(msg, type = 'success') {
+            this.toast = { show: true, msg, type };
+            setTimeout(() => { this.toast.show = false; }, 3000);
+        },
+
+        // 检查后端状态
+        async checkBackend() {
+            try {
+                const res = await fetch(this.API_BASE + '/api/stats', { method: 'GET' });
+                this.backendOnline = res.ok;
+                this.backendStatus = res.ok ? '已连接' : '连接异常';
+            } catch (e) {
+                this.backendOnline = false;
+                this.backendStatus = '未连接';
+            }
+        },
+
+        // 切换Tab
+        switchTab(tab) {
+            this.currentTab = tab;
+            if (tab === 'overview') this.loadStats();
+            if (tab === 'sessions') this.loadSessions();
+            if (tab === 'knowledge') this.loadKnowledge();
+            if (tab === 'faq') this.loadFaq();
+            if (tab === 'settings') this.loadConfig();
+        },
+
+        // ===== API调用封装 =====
+        async apiCall(url, options = {}) {
+            try {
+                const res = await fetch(this.API_BASE + url, {
+                    headers: { 'Content-Type': 'application/json', ...options.headers },
+                    ...options
+                });
+                if (!res.ok) {
+                    const errText = await res.text().catch(() => '请求失败');
+                    throw new Error(errText || `HTTP ${res.status}`);
+                }
+                return await res.json();
+            } catch (e) {
+                throw e;
+            }
+        },
+
+        // ===== 数据概览 =====
+        async loadStats() {
+            this.loading = true;
+            try {
+                const data = await this.apiCall('/api/stats');
+                this.stats = data;
+            } catch (e) {
+                this.stats = {};
+            } finally {
+                this.loading = false;
+                this.checkBackend();
+            }
+        },
+
+        // ===== 会话管理 =====
+        async loadSessions() {
+            this.sessionLoading = true;
+            try {
+                const data = await this.apiCall('/api/sessions');
+                this.sessions = Array.isArray(data) ? data : (data.sessions || []);
+            } catch (e) {
+                this.sessions = [];
+                this.showToast('加载会话列表失败', 'error');
+            } finally {
+                this.sessionLoading = false;
+            }
+        },
+
+        async selectSession(sessionId) {
+            this.selectedSession = sessionId;
+            this.messagesLoading = true;
+            this.messages = [];
+            try {
+                const data = await this.apiCall(`/api/sessions/${sessionId}/messages`);
+                this.messages = Array.isArray(data) ? data : (data.messages || []);
+                this.$nextTick(() => {
+                    this.scrollToBottom();
+                });
+            } catch (e) {
+                this.messages = [];
+                this.showToast('加载消息失败', 'error');
+            } finally {
+                this.messagesLoading = false;
+            }
+        },
+
+        async sendReply() {
+            if (!this.replyText.trim() || this.sendingReply) return;
+            const text = this.replyText.trim();
+            this.sendingReply = true;
+
+            // 本地先添加消息
+            this.messages.push({ role: 'assistant', content: text });
+            this.replyText = '';
+            this.$nextTick(() => this.scrollToBottom());
+
+            try {
+                await this.apiCall(`/api/sessions/${this.selectedSession}/messages`, {
+                    method: 'POST',
+                    body: JSON.stringify({ role: 'assistant', content: text })
+                });
+            } catch (e) {
+                this.showToast('发送失败', 'error');
+            } finally {
+                this.sendingReply = false;
+            }
+        },
+
+        scrollToBottom() {
+            const container = this.$refs.messageContainer;
+            if (container) container.scrollTop = container.scrollHeight;
+        },
+
+        // ===== 知识库 =====
+        async loadKnowledge() {
+            this.knowledgeLoading = true;
+            try {
+                const data = await this.apiCall('/api/knowledge/list');
+                this.knowledgeList = Array.isArray(data) ? data : (data.documents || data.items || []);
+            } catch (e) {
+                this.knowledgeList = [];
+                this.showToast('加载知识库失败', 'error');
+            } finally {
+                this.knowledgeLoading = false;
+            }
+        },
+
+        async handleFileDrop(e) {
+            this.uploadDragover = false;
+            const files = e.dataTransfer?.files;
+            if (files && files.length) await this.uploadFiles(files);
+        },
+
+        async handleFileSelect(e) {
+            const files = e.target.files;
+            if (files && files.length) await this.uploadFiles(files);
+            e.target.value = '';
+        },
+
+        async uploadFiles(files) {
+            for (const file of files) {
+                this.uploading = true;
+                this.uploadingName = file.name;
+                try {
+                    const formData = new FormData();
+                    formData.append('file', file);
+                    const res = await fetch(this.API_BASE + '/api/knowledge/upload', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    if (!res.ok) throw new Error('上传失败');
+                    this.showToast(`${file.name} 上传成功`);
+                    this.loadKnowledge();
+                } catch (e) {
+                    this.showToast(`${file.name} 上传失败`, 'error');
+                } finally {
+                    this.uploading = false;
+                    this.uploadingName = '';
+                }
+            }
+        },
+
+        async deleteKnowledge(docId) {
+            if (!confirm('确定删除该文档？')) return;
+            try {
+                await this.apiCall(`/api/knowledge/${docId}`, { method: 'DELETE' });
+                this.showToast('删除成功');
+                this.loadKnowledge();
+            } catch (e) {
+                this.showToast('删除失败', 'error');
+            }
+        },
+
+        // ===== FAQ =====
+        async loadFaq() {
+            this.faqLoading = true;
+            try {
+                const data = await this.apiCall('/api/knowledge/faq');
+                this.faqList = Array.isArray(data) ? data : (data.faqs || data.items || []);
+            } catch (e) {
+                this.faqList = [];
+                this.showToast('加载FAQ失败', 'error');
+            } finally {
+                this.faqLoading = false;
+            }
+        },
+
+        async addFaq() {
+            if (!this.faqForm.question.trim() || !this.faqForm.answer.trim()) return;
+            this.addingFaq = true;
+            try {
+                await this.apiCall('/api/knowledge/faq', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        question: this.faqForm.question.trim(),
+                        answer: this.faqForm.answer.trim()
+                    })
+                });
+                this.showToast('FAQ 添加成功');
+                this.faqForm = { question: '', answer: '' };
+                this.loadFaq();
+            } catch (e) {
+                this.showToast('添加失败', 'error');
+            } finally {
+                this.addingFaq = false;
+            }
+        },
+
+        toggleFaq(index) {
+            this.expandedFaq = this.expandedFaq === index ? null : index;
+        },
+
+        async deleteFaq(id) {
+            if (!confirm('确定删除该FAQ？')) return;
+            try {
+                await this.apiCall(`/api/knowledge/faq/${id}`, { method: 'DELETE' });
+                this.showToast('删除成功');
+                this.loadFaq();
+            } catch (e) {
+                this.showToast('删除失败', 'error');
+            }
+        },
+
+        // ===== 系统设置 =====
+        async loadConfig() {
+            this.settingsLoading = true;
+            try {
+                const data = await this.apiCall('/api/config');
+                this.configForm.api_key = data.api_key || '';
+                this.configForm.system_prompt = data.system_prompt || '';
+                this.configForm.welcome_message = data.welcome_message || '';
+                this.configForm.company_name = data.company_name || '';
+            } catch (e) {
+                // 首次可能没有配置
+                this.configForm = { api_key: '', system_prompt: '', welcome_message: '', company_name: '' };
+            } finally {
+                this.settingsLoading = false;
+            }
+        },
+
+        async saveConfig() {
+            this.savingConfig = true;
+            try {
+                await this.apiCall('/api/config', {
+                    method: 'POST',
+                    body: JSON.stringify(this.configForm)
+                });
+                this.showToast('设置已保存');
+            } catch (e) {
+                this.showToast('保存失败', 'error');
+            } finally {
+                this.savingConfig = false;
+            }
+        },
+
+        copyEmbedCode() {
+            const code = '<script src="http://localhost:8600/widget/chat-widget.js"><\/script>';
+            navigator.clipboard.writeText(code).then(() => {
+                this.embedCopied = true;
+                setTimeout(() => { this.embedCopied = false; }, 2000);
+            }).catch(() => {
+                this.showToast('复制失败，请手动复制', 'error');
+            });
+        },
+
+        // ===== 工具函数 =====
+        formatTime(timeStr) {
+            try {
+                const d = new Date(timeStr);
+                if (isNaN(d.getTime())) return timeStr;
+                const pad = n => String(n).padStart(2, '0');
+                return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+            } catch {
+                return timeStr;
+            }
+        }
+    };
+}
+</script>
+
+</body>
+</html>
