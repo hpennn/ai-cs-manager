@@ -19,9 +19,10 @@ from config import load_config, save_config
 from stats import router as stats_router
 
 # ---- 初始化目录 ----
-BASE_DIR = os.path.dirname(__file__)
-DATA_DIR = os.path.join(BASE_DIR, "data")
-FRONTEND_DIR = os.path.join(BASE_DIR, "..", "frontend")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(BASE_DIR)
+DATA_DIR = os.path.join(PROJECT_ROOT, "data")
+FRONTEND_DIR = os.path.join(PROJECT_ROOT, "frontend")
 
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(os.path.join(DATA_DIR, "knowledge_base", "chroma_db"), exist_ok=True)
@@ -99,11 +100,22 @@ app.include_router(config_router)
 
 @app.get("/")
 async def serve_frontend():
-    """提供前端首页"""
-    index_path = os.path.join(FRONTEND_DIR, "index.html")
-    if os.path.exists(index_path):
-        return FileResponse(index_path)
+    """提供前端管控面板"""
+    admin_path = os.path.join(FRONTEND_DIR, "admin.html")
+    if os.path.exists(admin_path):
+        return FileResponse(admin_path)
     return {"message": "AI客服管理系统后端运行中", "version": "1.0.0"}
+
+
+@app.get("/widget/chat-widget.js")
+async def serve_widget():
+    """提供客服Widget JS"""
+    widget_path = os.path.join(FRONTEND_DIR, "widget", "chat-widget.js")
+    if os.path.exists(widget_path):
+        from fastapi.responses import Response
+        with open(widget_path, "r", encoding="utf-8") as f:
+            return Response(content=f.read(), media_type="application/javascript")
+    return Response(content="// Widget not found", status_code=404, media_type="application/javascript")
 
 
 # 尝试挂载前端静态文件
