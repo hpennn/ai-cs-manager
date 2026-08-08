@@ -6,7 +6,7 @@ from datetime import datetime, date
 
 from fastapi import APIRouter
 
-DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
 CONVERSATIONS_DIR = os.path.join(DATA_DIR, "conversations")
 SESSIONS_INDEX_PATH = os.path.join(DATA_DIR, "sessions_index.json")
 
