@@ -11,7 +11,7 @@ from fastapi import APIRouter, UploadFile, File, HTTPException
 from pydantic import BaseModel
 
 # 初始化数据目录
-DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
 KNOWLEDGE_DIR = os.path.join(DATA_DIR, "knowledge_base")
 CHROMA_DIR = os.path.join(KNOWLEDGE_DIR, "chroma_db")
 
