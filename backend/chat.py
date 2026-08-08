@@ -14,7 +14,7 @@ from knowledge import get_chroma_client
 from config import get_config_value
 
 # 数据目录
-DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
 CONVERSATIONS_DIR = os.path.join(DATA_DIR, "conversations")
 SESSIONS_INDEX_PATH = os.path.join(DATA_DIR, "sessions_index.json")
 
