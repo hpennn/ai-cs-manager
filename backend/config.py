@@ -3,7 +3,7 @@
 import json
 import os
 
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "data", "config.json")
+CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "config.json")
 
 DEFAULT_CONFIG = {
     "qwen_api_key": "",
