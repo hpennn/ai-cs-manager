@@ -17,6 +17,8 @@
         .card-gradient-2 { background: linear-gradient(135deg, #7c3aed, #8b5cf6); }
         .card-gradient-3 { background: linear-gradient(135deg, #2563eb, #3b82f6); }
         .card-gradient-4 { background: linear-gradient(135deg, #059669, #10b981); }
+        .card-gradient-5 { background: linear-gradient(135deg, #d97706, #f59e0b); }
+        .card-gradient-6 { background: linear-gradient(135deg, #dc2626, #ef4444); }
         .nav-item { transition: all 0.2s ease; }
         .nav-item:hover { background: rgba(79, 70, 229, 0.15); }
         .nav-item.active { background: rgba(79, 70, 229, 0.25); border-right: 3px solid #4f46e5; }
@@ -27,8 +29,22 @@
         .msg-bubble { max-width: 70%; padding: 10px 14px; border-radius: 12px; word-wrap: break-word; line-height: 1.5; }
         .msg-user { background: #4f46e5; color: #fff; margin-left: auto; border-bottom-right-radius: 4px; }
         .msg-ai { background: #2a2a3e; color: #d1d5db; margin-right: auto; border-bottom-left-radius: 4px; }
+        .msg-admin { background: #d97706; color: #fff; margin-left: auto; border-bottom-right-radius: 4px; }
         .toast { position: fixed; top: 20px; right: 20px; padding: 12px 20px; border-radius: 8px; z-index: 9999; animation: slideIn 0.3s ease; }
         @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        .mode-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 9999px; font-size: 11px; font-weight: 500; }
+        .mode-auto { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); }
+        .mode-human { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); }
+        .session-item { transition: all 0.15s ease; }
+        .session-item:hover { background: rgba(255,255,255,0.05); }
+        .session-item.active { background: rgba(79, 70, 229, 0.15); border-left: 3px solid #4f46e5; }
+        .notification-dot { animation: pulse 2s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .ws-status { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; }
+        .ws-dot { width: 6px; height: 6px; border-radius: 50%; }
+        .ws-connected { background: #34d399; }
+        .ws-disconnected { background: #f87171; }
+        .ws-connecting { background: #fbbf24; animation: pulse 1s infinite; }
     </style>
 </head>
 <body>
@@ -49,7 +65,7 @@
                 <div class="w-9 h-9 rounded-lg gradient-bg flex items-center justify-center text-white font-bold text-sm">AI</div>
                 <div>
                     <div class="text-sm font-semibold text-white">AI客服管理</div>
-                    <div class="text-xs text-gray-400">控制台 v1.0</div>
+                    <div class="text-xs text-gray-400">控制台 v2.0</div>
                 </div>
             </div>
         </div>
@@ -57,11 +73,16 @@
         <!-- 菜单 -->
         <nav class="flex-1 py-3 overflow-y-auto">
             <template x-for="item in menuItems" :key="item.id">
-                <button class="nav-item w-full flex items-center gap-3 px-5 py-3 text-sm text-left"
+                <button class="nav-item w-full flex items-center gap-3 px-5 py-3 text-sm text-left relative"
                         :class="currentTab === item.id ? 'active text-white' : 'text-gray-400'"
                         @click="switchTab(item.id)">
                     <span class="text-lg" x-text="item.icon"></span>
                     <span x-text="item.label"></span>
+                    <!-- 通知徽标 -->
+                    <template x-if="item.id === 'sessions' && newSessionCount > 0">
+                        <span class="absolute right-3 top-1/2 -translate-y-1/2 bg-red-500 text-white text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center notification-dot"
+                              x-text="newSessionCount > 99 ? '99+' : newSessionCount"></span>
+                    </template>
                 </button>
             </template>
         </nav>
@@ -78,6 +99,11 @@
         <header class="h-14 flex items-center justify-between px-6 border-b border-gray-700/30 flex-shrink-0" style="background: #12121f;">
             <h1 class="text-base font-semibold text-white" x-text="menuItems.find(m => m.id === currentTab)?.label || ''"></h1>
             <div class="flex items-center gap-4">
+                <!-- WebSocket状态 -->
+                <div class="ws-status" x-show="currentTab === 'sessions'">
+                    <span class="ws-dot" :class="wsState === 'connected' ? 'ws-connected' : (wsState === 'connecting' ? 'ws-connecting' : 'ws-disconnected')"></span>
+                    <span class="text-gray-400" x-text="wsState === 'connected' ? '实时连接' : (wsState === 'connecting' ? '连接中...' : '未连接')"></span>
+                </div>
                 <span class="text-xs text-gray-400" x-show="backendStatus" x-text="backendStatus"></span>
                 <div class="w-2 h-2 rounded-full" :class="backendOnline ? 'bg-green-400' : 'bg-red-400'"></div>
             </div>
@@ -91,8 +117,8 @@
                 <div x-show="loading" class="flex justify-center py-20"><div class="spinner"></div></div>
                 <template x-if="!loading">
                     <div>
-                        <!-- 统计卡片 -->
-                        <div class="grid grid-cols-4 gap-5 mb-8">
+                        <!-- 统计卡片 - 第一行 -->
+                        <div class="grid grid-cols-4 gap-5 mb-5">
                             <div class="card-gradient-1 rounded-xl p-5 text-white">
                                 <div class="text-3xl font-bold mb-1" x-text="stats.total_sessions ?? 0"></div>
                                 <div class="text-sm opacity-80">总会话数</div>
@@ -111,6 +137,31 @@
                                     <span class="text-lg font-normal" x-show="stats.avg_response_time != null">s</span>
                                 </div>
                                 <div class="text-sm opacity-80">平均响应时间</div>
+                            </div>
+                        </div>
+
+                        <!-- 统计卡片 - 第二行（实时状态） -->
+                        <div class="grid grid-cols-3 gap-5 mb-8">
+                            <div class="rounded-xl p-5 text-white" style="background: linear-gradient(135deg, #1e40af, #3b82f6);">
+                                <div class="flex items-center justify-between">
+                                    <div class="text-3xl font-bold" x-text="stats.active_sessions ?? 0"></div>
+                                    <span class="text-2xl">🔵</span>
+                                </div>
+                                <div class="text-sm opacity-80 mt-1">当前活跃会话</div>
+                            </div>
+                            <div class="rounded-xl p-5 text-white" style="background: linear-gradient(135deg, #065f46, #10b981);">
+                                <div class="flex items-center justify-between">
+                                    <div class="text-3xl font-bold" x-text="stats.auto_sessions ?? 0"></div>
+                                    <span class="text-2xl">🤖</span>
+                                </div>
+                                <div class="text-sm opacity-80 mt-1">自动回复中</div>
+                            </div>
+                            <div class="rounded-xl p-5 text-white" style="background: linear-gradient(135deg, #92400e, #f59e0b);">
+                                <div class="flex items-center justify-between">
+                                    <div class="text-3xl font-bold" x-text="stats.human_sessions ?? 0"></div>
+                                    <span class="text-2xl">👤</span>
+                                </div>
+                                <div class="text-sm opacity-80 mt-1">人工接管中</div>
                             </div>
                         </div>
 
@@ -144,45 +195,104 @@
                 </template>
             </div>
 
-            <!-- 模块2：会话管理 -->
+            <!-- 模块2：会话管理（增强版） -->
             <div x-show="currentTab === 'sessions'" class="fade-in flex h-full -mt-2 -mx-2">
-                <!-- 会话列表 -->
-                <div class="w-[300px] flex-shrink-0 flex flex-col border-r border-gray-700/30" style="background: #12121f;">
-                    <div class="p-3 border-b border-gray-700/30">
-                        <button @click="loadSessions()" class="w-full py-2 text-sm rounded-lg gradient-bg text-white hover:opacity-90 transition">
-                            刷新列表
-                        </button>
+                <!-- 会话列表（左侧） -->
+                <div class="w-[320px] flex-shrink-0 flex flex-col border-r border-gray-700/30" style="background: #12121f;">
+                    <!-- 列表头部 -->
+                    <div class="p-3 border-b border-gray-700/30 space-y-2">
+                        <div class="flex items-center gap-2">
+                            <button @click="loadSessions()" class="flex-1 py-2 text-sm rounded-lg gradient-bg text-white hover:opacity-90 transition">
+                                刷新列表
+                            </button>
+                            <button @click="deleteSelectedSession()" x-show="selectedSession" 
+                                    class="py-2 px-3 text-sm rounded-lg text-red-400 hover:bg-red-500/10 border border-red-500/30 transition"
+                                    title="删除会话">
+                                🗑️
+                            </button>
+                        </div>
+                        <!-- 模式筛选 -->
+                        <div class="flex gap-1">
+                            <button @click="sessionFilter = 'all'" 
+                                    class="flex-1 py-1.5 text-xs rounded-md transition"
+                                    :class="sessionFilter === 'all' ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:bg-white/5'">
+                                全部
+                            </button>
+                            <button @click="sessionFilter = 'auto'" 
+                                    class="flex-1 py-1.5 text-xs rounded-md transition"
+                                    :class="sessionFilter === 'auto' ? 'bg-green-600 text-white' : 'text-gray-400 hover:bg-white/5'">
+                                🤖 自动
+                            </button>
+                            <button @click="sessionFilter = 'human'" 
+                                    class="flex-1 py-1.5 text-xs rounded-md transition"
+                                    :class="sessionFilter === 'human' ? 'bg-amber-600 text-white' : 'text-gray-400 hover:bg-white/5'">
+                                👤 人工
+                            </button>
+                        </div>
                     </div>
+                    <!-- 列表内容 -->
                     <div class="flex-1 overflow-y-auto">
                         <div x-show="sessionLoading" class="flex justify-center py-10"><div class="spinner"></div></div>
-                        <div x-show="!sessionLoading && sessions.length === 0" class="text-center py-10 text-gray-500 text-sm">
+                        <div x-show="!sessionLoading && filteredSessions.length === 0" class="text-center py-10 text-gray-500 text-sm">
                             暂无会话记录
                         </div>
-                        <template x-for="s in sessions" :key="s.session_id">
-                            <button class="w-full text-left px-4 py-3 border-b border-gray-700/20 hover:bg-white/5 transition"
-                                    :class="selectedSession === s.session_id ? 'bg-white/10' : ''"
+                        <template x-for="s in filteredSessions" :key="s.session_id">
+                            <button class="session-item w-full text-left px-4 py-3 border-b border-gray-700/20"
+                                    :class="selectedSession === s.session_id ? 'active' : ''"
                                     @click="selectSession(s.session_id)">
-                                <div class="flex items-center justify-between mb-1">
-                                    <span class="text-xs text-gray-400 truncate max-w-[180px]" x-text="s.session_id"></span>
-                                    <span class="text-xs text-gray-500" x-text="s.message_count + '条'"></span>
+                                <!-- 第一行：ID + 模式标签 -->
+                                <div class="flex items-center justify-between mb-1.5">
+                                    <span class="text-xs text-gray-300 font-mono truncate max-w-[160px]" 
+                                          x-text="s.customer_id || s.session_id?.substring(0, 12) || '未知'"></span>
+                                    <span class="mode-badge" 
+                                          :class="s.mode === 'human' ? 'mode-human' : 'mode-auto'"
+                                          x-text="s.mode === 'human' ? '👤 人工' : '🤖 自动'"></span>
                                 </div>
-                                <div class="text-xs text-gray-500" x-text="s.last_message_time ? formatTime(s.last_message_time) : ''"></div>
+                                <!-- 第二行：最后消息预览 -->
+                                <div class="text-xs text-gray-500 truncate mb-1" x-text="s.last_message || '暂无消息'"></div>
+                                <!-- 第三行：时间 + 消息数 -->
+                                <div class="flex items-center justify-between">
+                                    <span class="text-xs text-gray-600" x-text="s.last_message_time ? formatTime(s.last_message_time) : ''"></span>
+                                    <span class="text-xs text-gray-600" x-text="(s.message_count || 0) + '条'"></span>
+                                </div>
                             </button>
                         </template>
                     </div>
                 </div>
 
-                <!-- 对话详情 -->
+                <!-- 会话详情（右侧） -->
                 <div class="flex-1 flex flex-col">
+                    <!-- 未选中状态 -->
                     <div x-show="!selectedSession" class="flex-1 flex items-center justify-center text-gray-500 text-sm">
-                        ← 请选择一个会话查看详情
+                        <div class="text-center">
+                            <div class="text-4xl mb-3">💬</div>
+                            <div>← 请选择一个会话查看详情</div>
+                        </div>
                     </div>
+                    <!-- 选中会话 -->
                     <template x-if="selectedSession">
                         <div class="flex-1 flex flex-col">
-                            <!-- 会话头部 -->
-                            <div class="px-4 py-3 border-b border-gray-700/30 flex items-center gap-2" style="background: #12121f;">
-                                <span class="text-sm text-gray-400">会话：</span>
-                                <span class="text-sm text-white truncate" x-text="selectedSession"></span>
+                            <!-- 会话头部：模式切换 + 信息 -->
+                            <div class="px-4 py-3 border-b border-gray-700/30 flex items-center justify-between" style="background: #12121f;">
+                                <div class="flex items-center gap-3">
+                                    <span class="text-sm text-gray-400">会话：</span>
+                                    <span class="text-sm text-white font-mono truncate max-w-[240px]" x-text="selectedSession"></span>
+                                    <span class="mode-badge" 
+                                          :class="currentSessionMode === 'human' ? 'mode-human' : 'mode-auto'"
+                                          x-text="currentSessionMode === 'human' ? '👤 人工接管' : '🤖 自动回复'"></span>
+                                </div>
+                                <!-- 模式切换按钮 -->
+                                <div class="flex items-center gap-2">
+                                    <button @click="toggleSessionMode()" 
+                                            :disabled="switchingMode"
+                                            class="px-4 py-1.5 rounded-lg text-xs font-medium transition"
+                                            :class="currentSessionMode === 'human' 
+                                                ? 'bg-green-600/20 text-green-400 border border-green-500/30 hover:bg-green-600/30' 
+                                                : 'bg-amber-600/20 text-amber-400 border border-amber-500/30 hover:bg-amber-600/30'">
+                                        <span x-show="!switchingMode" x-text="currentSessionMode === 'human' ? '切回🤖自动回复' : '切换👤人工接管'"></span>
+                                        <span x-show="switchingMode">切换中...</span>
+                                    </button>
+                                </div>
                             </div>
 
                             <!-- 消息列表 -->
@@ -192,26 +302,53 @@
                                     暂无消息记录
                                 </div>
                                 <template x-for="msg in messages" :key="msg.id || Math.random()">
-                                    <div class="flex" :class="msg.role === 'user' ? 'justify-end' : 'justify-start'">
-                                        <div class="msg-bubble" :class="msg.role === 'user' ? 'msg-user' : 'msg-ai'">
+                                    <div class="flex" 
+                                         :class="msg.role === 'user' ? 'justify-start' : (msg.role === 'admin' ? 'justify-end' : 'justify-end')">
+                                        <div class="msg-bubble" 
+                                             :class="msg.role === 'user' ? 'msg-ai' : (msg.role === 'admin' ? 'msg-admin' : 'msg-user')">
                                             <div x-text="msg.content"></div>
-                                            <div class="text-xs mt-1 opacity-50" x-text="msg.role === 'user' ? '用户' : 'AI客服'"></div>
+                                            <div class="text-xs mt-1 opacity-50 flex items-center gap-1"
+                                                 :class="msg.role === 'user' ? 'justify-start' : 'justify-end'">
+                                                <span x-text="msg.role === 'user' ? '🧑 客户' : (msg.role === 'admin' ? '👤 管理员' : '🤖 AI客服')"></span>
+                                                <span x-show="msg.created_at" x-text="formatTimeShort(msg.created_at)"></span>
+                                            </div>
                                         </div>
                                     </div>
                                 </template>
+                                <!-- 新消息指示器 -->
+                                <div x-show="hasNewMessages && selectedSession" class="flex justify-center py-2">
+                                    <span class="text-xs text-indigo-400 bg-indigo-500/10 px-3 py-1 rounded-full">
+                                        ✨ 收到新消息
+                                    </span>
+                                </div>
                             </div>
 
                             <!-- 输入区域 -->
-                            <div class="p-3 border-t border-gray-700/30 flex gap-2" style="background: #12121f;">
-                                <input type="text" x-model="replyText" @keydown.enter="sendReply()"
-                                       placeholder="输入管理员回复..."
-                                       class="flex-1 px-4 py-2 rounded-lg text-sm text-white outline-none focus:ring-2 focus:ring-indigo-500"
-                                       style="background: #2a2a3e; border: 1px solid transparent;">
-                                <button @click="sendReply()" :disabled="!replyText.trim() || sendingReply"
-                                        class="px-5 py-2 rounded-lg text-sm text-white gradient-bg hover:opacity-90 transition disabled:opacity-50">
-                                    <span x-show="!sendingReply">发送</span>
-                                    <span x-show="sendingReply">发送中...</span>
-                                </button>
+                            <div class="p-3 border-t border-gray-700/30" style="background: #12121f;">
+                                <!-- 人工模式：正常输入 -->
+                                <template x-if="currentSessionMode === 'human'">
+                                    <div class="flex gap-2">
+                                        <input type="text" x-model="replyText" @keydown.enter="sendAdminMessage()"
+                                               placeholder="以管理员身份回复..."
+                                               class="flex-1 px-4 py-2.5 rounded-lg text-sm text-white outline-none focus:ring-2 focus:ring-amber-500"
+                                               style="background: #2a2a3e; border: 1px solid rgba(245, 158, 11, 0.3);">
+                                        <button @click="sendAdminMessage()" :disabled="!replyText.trim() || sendingReply"
+                                                class="px-5 py-2.5 rounded-lg text-sm text-white hover:opacity-90 transition disabled:opacity-50"
+                                                style="background: linear-gradient(135deg, #d97706, #f59e0b);">
+                                            <span x-show="!sendingReply">发送</span>
+                                            <span x-show="sendingReply">...</span>
+                                        </button>
+                                    </div>
+                                </template>
+                                <!-- 自动模式：灰显提示 -->
+                                <template x-if="currentSessionMode !== 'human'">
+                                    <div class="flex items-center justify-center py-3">
+                                        <div class="text-center">
+                                            <div class="text-sm text-gray-500">🤖 当前为自动回复模式，AI正在处理客户消息</div>
+                                            <div class="text-xs text-gray-600 mt-1">点击右上角「切换 👤 人工接管」后可手动回复</div>
+                                        </div>
+                                    </div>
+                                </template>
                             </div>
                         </div>
                     </template>
@@ -394,7 +531,7 @@
                     <h3 class="text-base font-semibold text-white mb-4">Widget 嵌入代码</h3>
                     <p class="text-sm text-gray-400 mb-4">将以下代码添加到您的网站页面中，即可嵌入客服聊天窗口：</p>
                     <div class="relative">
-                        <pre class="rounded-lg p-4 text-sm overflow-x-auto" style="background: #0f0f1a; border: 1px solid #333;"><code class="text-green-400">&lt;script src="http://localhost:8600/widget/chat-widget.js"&gt;&lt;/script&gt;</code></pre>
+                        <pre class="rounded-lg p-4 text-sm overflow-x-auto" style="background: #0f0f1a; border: 1px solid #333;"><code class="text-green-400" x-text="'&lt;script src=&quot;' + API_BASE + '/widget/chat-widget.js&quot;&gt;&lt;/script&gt;'"></code></pre>
                         <button @click="copyEmbedCode()" class="absolute top-3 right-3 px-3 py-1 rounded text-xs text-white gradient-bg hover:opacity-90 transition">
                             <span x-text="embedCopied ? '已复制 ✓' : '复制代码'"></span>
                         </button>
@@ -410,7 +547,14 @@
 function adminApp() {
     return {
         // 基础配置
-        API_BASE: 'http://localhost:8600',
+        API_BASE: (function() {
+            // 自动检测：如果在服务器上访问就用相对路径，本地开发用 localhost:8600
+            const hostname = window.location.hostname;
+            if (hostname === 'localhost' || hostname === '127.0.0.1') {
+                return 'http://localhost:8600';
+            }
+            return window.location.origin;
+        })(),
         currentTab: 'overview',
         loading: false,
         backendOnline: false,
@@ -435,10 +579,21 @@ function adminApp() {
         sessions: [],
         sessionLoading: false,
         selectedSession: null,
+        currentSessionMode: 'auto',
+        sessionFilter: 'all',
         messages: [],
         messagesLoading: false,
         replyText: '',
         sendingReply: false,
+        switchingMode: false,
+        hasNewMessages: false,
+        newSessionCount: 0,
+        previousSessionIds: [],
+
+        // WebSocket
+        wsState: 'disconnected', // disconnected | connecting | connected
+        ws: null,
+        wsReconnectTimer: null,
 
         // 知识库
         knowledgeList: [],
@@ -461,10 +616,22 @@ function adminApp() {
         showApiKey: false,
         embedCopied: false,
 
+        // 计算属性：筛选后的会话列表
+        get filteredSessions() {
+            if (this.sessionFilter === 'all') return this.sessions;
+            return this.sessions.filter(s => (s.mode || 'auto') === this.sessionFilter);
+        },
+
         // 初始化
         init() {
             this.checkBackend();
             this.loadStats();
+            // 定时刷新统计数据
+            setInterval(() => {
+                if (this.currentTab === 'overview') {
+                    this.loadStats();
+                }
+            }, 30000);
         },
 
         // 显示通知
@@ -489,10 +656,18 @@ function adminApp() {
         switchTab(tab) {
             this.currentTab = tab;
             if (tab === 'overview') this.loadStats();
-            if (tab === 'sessions') this.loadSessions();
+            if (tab === 'sessions') {
+                this.loadSessions();
+                this.newSessionCount = 0;
+            }
             if (tab === 'knowledge') this.loadKnowledge();
             if (tab === 'faq') this.loadFaq();
             if (tab === 'settings') this.loadConfig();
+
+            // 离开会话管理时断开WS
+            if (tab !== 'sessions') {
+                this.disconnectWs();
+            }
         },
 
         // ===== API调用封装 =====
@@ -531,7 +706,27 @@ function adminApp() {
             this.sessionLoading = true;
             try {
                 const data = await this.apiCall('/api/sessions');
-                this.sessions = Array.isArray(data) ? data : (data.sessions || []);
+                const sessionList = Array.isArray(data) ? data : (data.sessions || []);
+                
+                // 检测新会话
+                if (this.previousSessionIds.length > 0 && this.selectedSession) {
+                    const newIds = sessionList
+                        .map(s => s.session_id)
+                        .filter(id => !this.previousSessionIds.includes(id));
+                    if (newIds.length > 0 && this.currentTab !== 'sessions') {
+                        this.newSessionCount += newIds.length;
+                    }
+                }
+                this.previousSessionIds = sessionList.map(s => s.session_id);
+                this.sessions = sessionList;
+
+                // 更新选中会话的模式状态
+                if (this.selectedSession) {
+                    const currentSession = this.sessions.find(s => s.session_id === this.selectedSession);
+                    if (currentSession) {
+                        this.currentSessionMode = currentSession.mode || 'auto';
+                    }
+                }
             } catch (e) {
                 this.sessions = [];
                 this.showToast('加载会话列表失败', 'error');
@@ -544,12 +739,22 @@ function adminApp() {
             this.selectedSession = sessionId;
             this.messagesLoading = true;
             this.messages = [];
+            this.hasNewMessages = false;
+
             try {
-                const data = await this.apiCall(`/api/sessions/${sessionId}/messages`);
-                this.messages = Array.isArray(data) ? data : (data.messages || []);
+                // 获取会话详情（含模式信息）
+                const sessionData = await this.apiCall(`/api/sessions/${sessionId}`);
+                this.currentSessionMode = sessionData.mode || 'auto';
+
+                // 获取消息列表
+                const msgData = await this.apiCall(`/api/sessions/${sessionId}/messages`);
+                this.messages = Array.isArray(msgData) ? msgData : (msgData.messages || []);
                 this.$nextTick(() => {
                     this.scrollToBottom();
                 });
+
+                // 连接WebSocket
+                this.connectWs(sessionId);
             } catch (e) {
                 this.messages = [];
                 this.showToast('加载消息失败', 'error');
@@ -558,20 +763,52 @@ function adminApp() {
             }
         },
 
-        async sendReply() {
+        // 切换会话模式
+        async toggleSessionMode() {
+            if (!this.selectedSession || this.switchingMode) return;
+            this.switchingMode = true;
+            const newMode = this.currentSessionMode === 'human' ? 'auto' : 'human';
+
+            try {
+                await this.apiCall(`/api/sessions/${this.selectedSession}/mode`, {
+                    method: 'PUT',
+                    body: JSON.stringify({ mode: newMode })
+                });
+                this.currentSessionMode = newMode;
+
+                // 更新会话列表中该会话的模式
+                const session = this.sessions.find(s => s.session_id === this.selectedSession);
+                if (session) {
+                    session.mode = newMode;
+                }
+
+                this.showToast(newMode === 'human' ? '已切换为人工接管 👤' : '已切换为自动回复 🤖');
+            } catch (e) {
+                this.showToast('模式切换失败', 'error');
+            } finally {
+                this.switchingMode = false;
+            }
+        },
+
+        // 管理员发送消息
+        async sendAdminMessage() {
             if (!this.replyText.trim() || this.sendingReply) return;
+            if (this.currentSessionMode !== 'human') {
+                this.showToast('请先切换到人工接管模式', 'error');
+                return;
+            }
             const text = this.replyText.trim();
             this.sendingReply = true;
 
             // 本地先添加消息
-            this.messages.push({ role: 'assistant', content: text });
+            this.messages.push({ role: 'admin', content: text, created_at: new Date().toISOString() });
             this.replyText = '';
             this.$nextTick(() => this.scrollToBottom());
 
             try {
                 await this.apiCall(`/api/sessions/${this.selectedSession}/messages`, {
                     method: 'POST',
-                    body: JSON.stringify({ role: 'assistant', content: text })
+                    body: JSON.stringify({ content: text, role: 'admin' })
                 });
             } catch (e) {
                 this.showToast('发送失败', 'error');
@@ -580,9 +817,123 @@ function adminApp() {
             }
         },
 
+        // 删除当前选中的会话
+        async deleteSelectedSession() {
+            if (!this.selectedSession) return;
+            if (!confirm('确定删除该会话？此操作不可恢复。')) return;
+
+            try {
+                await this.apiCall(`/api/sessions/${this.selectedSession}`, { method: 'DELETE' });
+                this.showToast('会话已删除');
+                this.selectedSession = null;
+                this.messages = [];
+                this.disconnectWs();
+                this.loadSessions();
+            } catch (e) {
+                this.showToast('删除失败', 'error');
+            }
+        },
+
         scrollToBottom() {
             const container = this.$refs.messageContainer;
             if (container) container.scrollTop = container.scrollHeight;
+        },
+
+        // ===== WebSocket =====
+        connectWs(sessionId) {
+            this.disconnectWs();
+            if (!sessionId) return;
+
+            this.wsState = 'connecting';
+
+            try {
+                const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const wsHost = window.location.hostname;
+                const wsPort = this.API_BASE.includes('localhost') ? '8600' : window.location.port;
+                const wsUrl = `${wsProtocol}//${wsHost}:${wsPort}/ws/admin/${sessionId}`;
+
+                this.ws = new WebSocket(wsUrl);
+
+                this.ws.onopen = () => {
+                    this.wsState = 'connected';
+                };
+
+                this.ws.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        this.handleWsMessage(data);
+                    } catch (e) {
+                        console.warn('WebSocket message parse error:', e);
+                    }
+                };
+
+                this.ws.onclose = () => {
+                    this.wsState = 'disconnected';
+                    // 如果在会话管理页面且仍选中会话，尝试重连
+                    if (this.currentTab === 'sessions' && this.selectedSession) {
+                        this.wsReconnectTimer = setTimeout(() => {
+                            if (this.selectedSession === sessionId) {
+                                this.connectWs(sessionId);
+                            }
+                        }, 3000);
+                    }
+                };
+
+                this.ws.onerror = () => {
+                    this.wsState = 'disconnected';
+                };
+            } catch (e) {
+                this.wsState = 'disconnected';
+            }
+        },
+
+        disconnectWs() {
+            if (this.wsReconnectTimer) {
+                clearTimeout(this.wsReconnectTimer);
+                this.wsReconnectTimer = null;
+            }
+            if (this.ws) {
+                this.ws.onclose = null; // 阻止重连
+                this.ws.close();
+                this.ws = null;
+            }
+            this.wsState = 'disconnected';
+        },
+
+        handleWsMessage(data) {
+            // 处理不同类型的WebSocket消息
+            const type = data.type || 'message';
+
+            if (type === 'message' || type === 'new_message') {
+                // 新消息
+                const msg = {
+                    id: data.id || data.message_id || Date.now(),
+                    role: data.role || 'assistant',
+                    content: data.content || data.message || '',
+                    created_at: data.created_at || data.timestamp || new Date().toISOString()
+                };
+
+                // 避免重复添加
+                const exists = this.messages.some(m => m.id === msg.id);
+                if (!exists) {
+                    this.messages.push(msg);
+                    this.hasNewMessages = true;
+                    this.$nextTick(() => this.scrollToBottom());
+
+                    // 清除新消息指示器
+                    setTimeout(() => { this.hasNewMessages = false; }, 3000);
+                }
+            } else if (type === 'session_update') {
+                // 会话状态更新
+                if (data.mode) {
+                    this.currentSessionMode = data.mode;
+                    const session = this.sessions.find(s => s.session_id === this.selectedSession);
+                    if (session) session.mode = data.mode;
+                }
+            } else if (type === 'session_list_update') {
+                // 会话列表更新
+                this.loadSessions();
+            }
         },
 
         // ===== 知识库 =====
@@ -705,7 +1056,6 @@ function adminApp() {
                 this.configForm.welcome_message = data.welcome_message || '';
                 this.configForm.company_name = data.company_name || '';
             } catch (e) {
-                // 首次可能没有配置
                 this.configForm = { api_key: '', system_prompt: '', welcome_message: '', company_name: '' };
             } finally {
                 this.settingsLoading = false;
@@ -728,7 +1078,7 @@ function adminApp() {
         },
 
         copyEmbedCode() {
-            const code = '<script src="http://localhost:8600/widget/chat-widget.js"><\/script>';
+            const code = `<script src="${this.API_BASE}/widget/chat-widget.js"><\/script>`;
             navigator.clipboard.writeText(code).then(() => {
                 this.embedCopied = true;
                 setTimeout(() => { this.embedCopied = false; }, 2000);
@@ -746,6 +1096,17 @@ function adminApp() {
                 return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
             } catch {
                 return timeStr;
+            }
+        },
+
+        formatTimeShort(timeStr) {
+            try {
+                const d = new Date(timeStr);
+                if (isNaN(d.getTime())) return '';
+                const pad = n => String(n).padStart(2, '0');
+                return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+            } catch {
+                return '';
             }
         }
     };
