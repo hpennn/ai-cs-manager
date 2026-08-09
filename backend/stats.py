@@ -101,9 +101,22 @@ async def get_stats():
     if response_times:
         avg_response_time = round(sum(response_times) / len(response_times), 2)
 
+    # 活跃会话（今天有消息的会话）
+    active_sessions = sum(
+        1 for s in sessions
+        if s.get("last_message_time", "").startswith(today_str)
+    )
+
+    # 按模式统计
+    auto_sessions = sum(1 for s in sessions if s.get("mode", "auto") == "auto")
+    human_sessions = sum(1 for s in sessions if s.get("mode", "auto") == "human")
+
     return {
         "total_sessions": total_sessions,
         "total_messages": total_messages,
         "today_messages": today_messages,
-        "avg_response_time": avg_response_time
+        "avg_response_time": avg_response_time,
+        "active_sessions": active_sessions,
+        "auto_sessions": auto_sessions,
+        "human_sessions": human_sessions
     }
