@@ -35,6 +35,14 @@ class ChatSource(BaseModel):
     score: float
 
 
+class ModeUpdateRequest(BaseModel):
+    mode: str  # "auto" | "human"
+
+
+class AdminMessageRequest(BaseModel):
+    content: str
+
+
 # ---- 通义千问 API 调用 ----
 
 async def call_qwen(messages: list) -> str:
@@ -131,6 +139,26 @@ def save_sessions_index(index: list):
         json.dump(index, f, ensure_ascii=False, indent=2)
 
 
+def get_session_mode(session_id: str) -> str:
+    """获取会话当前模式，默认 auto"""
+    index = load_sessions_index()
+    for item in index:
+        if item["session_id"] == session_id:
+            return item.get("mode", "auto")
+    return "auto"
+
+
+def set_session_mode(session_id: str, mode: str):
+    """设置会话模式"""
+    index = load_sessions_index()
+    for item in index:
+        if item["session_id"] == session_id:
+            item["mode"] = mode
+            save_sessions_index(index)
+            return True
+    return False
+
+
 def update_session_index(session_id: str):
     """更新会话索引（新增或更新时间戳）"""
     index = load_sessions_index()
@@ -146,7 +174,8 @@ def update_session_index(session_id: str):
             "session_id": session_id,
             "created_at": datetime.now().isoformat(),
             "updated_at": datetime.now().isoformat(),
-            "message_count": 1
+            "message_count": 1,
+            "mode": "auto"
         })
     save_sessions_index(index)
 
@@ -209,26 +238,18 @@ async def process_chat(session_id: str, message: str) -> dict:
     return {"reply": reply, "sources": sources}
 
 
-# ---- API Endpoints ----
-
-@router.post("/api/chat")
-async def chat(request: ChatRequest):
-    """HTTP对话接口"""
-    if not request.message.strip():
-        raise HTTPException(status_code=400, detail="消息不能为空")
-
-    result = await process_chat(request.session_id, request.message)
-    return result
-
-
-# ---- WebSocket 实时对话 ----
+# ---- WebSocket 连接管理器 ----
 
 class ConnectionManager:
-    """WebSocket连接管理器"""
+    """WebSocket连接管理器（客户侧 + 管理员侧）"""
 
     def __init__(self):
+        # 客户侧: session_id -> WebSocket
         self.active_connections: dict[str, WebSocket] = {}
+        # 管理员侧: session_id -> set of WebSockets（同一会话可有多人监听）
+        self.admin_connections: dict[str, set] = {}
 
+    # -- 客户侧 --
     async def connect(self, session_id: str, websocket: WebSocket):
         await websocket.accept()
         self.active_connections[session_id] = websocket
@@ -240,13 +261,40 @@ class ConnectionManager:
         if session_id in self.active_connections:
             await self.active_connections[session_id].send_json(message)
 
+    # -- 管理员侧 --
+    async def admin_connect(self, session_id: str, websocket: WebSocket):
+        await websocket.accept()
+        if session_id not in self.admin_connections:
+            self.admin_connections[session_id] = set()
+        self.admin_connections[session_id].add(websocket)
+
+    def admin_disconnect(self, session_id: str, websocket: WebSocket):
+        if session_id in self.admin_connections:
+            self.admin_connections[session_id].discard(websocket)
+            if not self.admin_connections[session_id]:
+                del self.admin_connections[session_id]
+
+    async def broadcast_to_admins(self, session_id: str, message: dict):
+        """向某会话的所有管理员连接广播消息"""
+        if session_id in self.admin_connections:
+            dead = []
+            for ws in self.admin_connections[session_id]:
+                try:
+                    await ws.send_json(message)
+                except Exception:
+                    dead.append(ws)
+            for ws in dead:
+                self.admin_connections[session_id].discard(ws)
+
 
 manager = ConnectionManager()
 
 
+# ---- WebSocket 客户实时对话 ----
+
 @router.websocket("/ws/chat/{session_id}")
 async def websocket_chat(websocket: WebSocket, session_id: str):
-    """WebSocket实时对话"""
+    """WebSocket实时对话（客户端）"""
     await manager.connect(session_id, websocket)
     try:
         while True:
@@ -256,25 +304,280 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
                 await websocket.send_json({"reply": "消息不能为空", "sources": []})
                 continue
 
-            result = await process_chat(session_id, message)
-            await websocket.send_json(result)
+            # 获取会话模式
+            mode = get_session_mode(session_id)
+
+            # 通知管理员（无论哪种模式都推送）
+            await manager.broadcast_to_admins(session_id, {
+                "type": "customer_message",
+                "message": message,
+                "timestamp": datetime.now().isoformat(),
+                "mode": mode
+            })
+
+            if mode == "auto":
+                # 自动模式：照常调 process_chat（内部负责保存用户消息+AI回复+更新索引）
+                result = await process_chat(session_id, message)
+                await websocket.send_json(result)
+
+                # 通知管理员 AI 已回复
+                await manager.broadcast_to_admins(session_id, {
+                    "type": "ai_reply",
+                    "reply": result.get("reply", ""),
+                    "sources": result.get("sources", []),
+                    "timestamp": datetime.now().isoformat()
+                })
+            else:
+                # 人工模式：不调AI，只保存用户消息并标记等待
+                history = load_session_messages(session_id)
+                history.append({
+                    "role": "user",
+                    "content": message,
+                    "timestamp": datetime.now().isoformat(),
+                    "pending_human_reply": True
+                })
+                save_session_messages(session_id, history)
+                update_session_index(session_id)
+
+                await websocket.send_json({
+                    "reply": "您的消息已收到，正在为您转接人工客服，请稍候...",
+                    "sources": [],
+                    "mode": "human"
+                })
+
+                # 通知管理员需要人工回复
+                await manager.broadcast_to_admins(session_id, {
+                    "type": "needs_human_reply",
+                    "customer_message": message,
+                    "timestamp": datetime.now().isoformat()
+                })
     except WebSocketDisconnect:
         manager.disconnect(session_id)
+
+
+# ---- WebSocket 管理员实时对话 ----
+
+@router.websocket("/ws/admin/{session_id}")
+async def websocket_admin(websocket: WebSocket, session_id: str):
+    """管理员WebSocket端点，实时监听客户消息并可发送消息"""
+    await manager.admin_connect(session_id, websocket)
+    try:
+        while True:
+            data = await websocket.receive_json()
+            action = data.get("action", "")
+
+            if action == "send_message":
+                # 管理员手动发送消息给客户
+                content = data.get("content", "").strip()
+                if not content:
+                    await websocket.send_json({"type": "error", "message": "消息不能为空"})
+                    continue
+
+                # 保存到会话记录
+                history = load_session_messages(session_id)
+                history.append({
+                    "role": "assistant",
+                    "content": content,
+                    "timestamp": datetime.now().isoformat(),
+                    "from": "human"
+                })
+                save_session_messages(session_id, history)
+                update_session_index(session_id)
+
+                # 发送给客户端
+                await manager.send_message(session_id, {
+                    "reply": content,
+                    "sources": [],
+                    "from": "human"
+                })
+
+                # 通知管理员侧确认
+                await websocket.send_json({
+                    "type": "message_sent",
+                    "content": content,
+                    "timestamp": datetime.now().isoformat()
+                })
+
+            elif action == "get_messages":
+                # 管理员获取历史消息
+                messages = load_session_messages(session_id)
+                await websocket.send_json({
+                    "type": "messages",
+                    "messages": messages
+                })
+            else:
+                await websocket.send_json({"type": "error", "message": f"未知操作: {action}"})
+    except WebSocketDisconnect:
+        manager.admin_disconnect(session_id, websocket)
+
+
+# ---- HTTP API 接口 ----
+
+@router.post("/api/chat")
+async def chat(request: ChatRequest):
+    """HTTP对话接口"""
+    if not request.message.strip():
+        raise HTTPException(status_code=400, detail="消息不能为空")
+
+    result = await process_chat(request.session_id, request.message)
+    return result
 
 
 # ---- 会话管理接口 ----
 
 @router.get("/api/sessions")
 async def list_sessions():
-    """获取所有会话列表"""
+    """获取所有会话列表（含 mode、last_message、customer_name）"""
     index = load_sessions_index()
+
+    # 为每个会话补充增强字段
+    for item in index:
+        # 确保 mode 字段存在
+        if "mode" not in item:
+            item["mode"] = "auto"
+
+        # 获取最后一条消息预览
+        messages = load_session_messages(item["session_id"])
+        if messages:
+            last = messages[-1]
+            item["last_message"] = last.get("content", "")
+            item["last_message_role"] = last.get("role", "")
+            item["last_message_time"] = last.get("timestamp", "")
+        else:
+            item["last_message"] = ""
+            item["last_message_role"] = ""
+            item["last_message_time"] = ""
+
+        # 客户昵称（取第一条 user 消息的前20字符作为标识，或使用 session_id 前8位）
+        if "customer_name" not in item:
+            user_messages = [m for m in messages if m.get("role") == "user"]
+            if user_messages:
+                # 尝试从第一条消息推断昵称
+                first_msg = user_messages[0].get("content", "")
+                item["customer_name"] = f"客户-{item['session_id'][:8]}"
+            else:
+                item["customer_name"] = f"客户-{item['session_id'][:8]}"
+
     # 按更新时间倒序
     index.sort(key=lambda x: x.get("updated_at", ""), reverse=True)
     return index
 
 
+@router.get("/api/sessions/{session_id}")
+async def get_session_detail(session_id: str):
+    """获取会话详情（含 mode）"""
+    index = load_sessions_index()
+    session_info = None
+    for item in index:
+        if item["session_id"] == session_id:
+            session_info = item.copy()
+            break
+
+    if not session_info:
+        raise HTTPException(status_code=404, detail="会话不存在")
+
+    # 确保 mode 字段
+    if "mode" not in session_info:
+        session_info["mode"] = "auto"
+
+    # 附加消息记录
+    session_info["messages"] = load_session_messages(session_id)
+    return session_info
+
+
+@router.put("/api/sessions/{session_id}/mode")
+async def update_mode(session_id: str, request: ModeUpdateRequest):
+    """切换会话模式"""
+    if request.mode not in ("auto", "human"):
+        raise HTTPException(status_code=400, detail="mode 必须为 'auto' 或 'human'")
+
+    # 检查会话是否存在
+    index = load_sessions_index()
+    exists = any(item["session_id"] == session_id for item in index)
+    if not exists:
+        raise HTTPException(status_code=404, detail="会话不存在")
+
+    set_session_mode(session_id, request.mode)
+
+    # 通知管理员切换事件
+    await manager.broadcast_to_admins(session_id, {
+        "type": "mode_changed",
+        "mode": request.mode,
+        "timestamp": datetime.now().isoformat()
+    })
+
+    # 通知客户端
+    await manager.send_message(session_id, {
+        "type": "mode_changed",
+        "mode": request.mode,
+        "timestamp": datetime.now().isoformat()
+    })
+
+    return {"session_id": session_id, "mode": request.mode}
+
+
+@router.post("/api/sessions/{session_id}/messages")
+async def admin_send_message(session_id: str, request: AdminMessageRequest):
+    """管理员手动发送消息"""
+    if not request.content.strip():
+        raise HTTPException(status_code=400, detail="消息不能为空")
+
+    # 检查会话是否存在
+    index = load_sessions_index()
+    exists = any(item["session_id"] == session_id for item in index)
+    if not exists:
+        raise HTTPException(status_code=404, detail="会话不存在")
+
+    # 保存到会话记录
+    history = load_session_messages(session_id)
+    history.append({
+        "role": "assistant",
+        "content": request.content,
+        "timestamp": datetime.now().isoformat(),
+        "from": "human"
+    })
+    save_session_messages(session_id, history)
+    update_session_index(session_id)
+
+    # 通过 WebSocket 发送给客户端
+    await manager.send_message(session_id, {
+        "reply": request.content,
+        "sources": [],
+        "from": "human"
+    })
+
+    # 通知管理员侧
+    await manager.broadcast_to_admins(session_id, {
+        "type": "human_reply",
+        "content": request.content,
+        "timestamp": datetime.now().isoformat()
+    })
+
+    return {"status": "sent", "timestamp": datetime.now().isoformat()}
+
+
+@router.delete("/api/sessions/{session_id}")
+async def delete_session(session_id: str):
+    """删除会话"""
+    # 从索引中移除
+    index = load_sessions_index()
+    new_index = [item for item in index if item["session_id"] != session_id]
+
+    if len(new_index) == len(index):
+        raise HTTPException(status_code=404, detail="会话不存在")
+
+    save_sessions_index(new_index)
+
+    # 删除对话记录文件
+    file_path = os.path.join(CONVERSATIONS_DIR, f"{session_id}.json")
+    if os.path.exists(file_path):
+        os.remove(file_path)
+
+    return {"status": "deleted", "session_id": session_id}
+
+
 @router.get("/api/sessions/{session_id}/messages")
-async def get_session_messages(session_id: str):
+async def get_session_messages_api(session_id: str):
     """获取某会话的消息记录"""
     messages = load_session_messages(session_id)
     if not messages:
