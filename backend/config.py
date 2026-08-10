@@ -6,7 +6,9 @@ import os
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "config.json")
 
 DEFAULT_CONFIG = {
-    "qwen_api_key": "",
+    "zhipu_api_key": "4854154d31a042e2a8d8eee754097757.WDct0BiBIxyzswdH",
+    "zhipu_base_url": "https://open.bigmodel.cn/api/paas/v4",
+    "zhipu_model": "glm-4-flash",
     "system_prompt": "你是一个专业的电商客服助手，根据知识库中的信息回答用户问题。如果知识库中没有相关信息，请礼貌地告知用户并建议联系人工客服。回答要简洁、准确、友好。",
     "welcome_message": "您好！我是AI客服助手，请问有什么可以帮您？",
     "company_name": "我的公司"
@@ -59,9 +61,9 @@ def set_config_value(key: str, value):
 def get_masked_config() -> dict:
     """获取脱敏后的配置（api_key只显示前后各2位）"""
     config = load_config()
-    api_key = config.get("qwen_api_key", "")
+    api_key = config.get("zhipu_api_key", "")
     if api_key and len(api_key) > 4:
-        config["qwen_api_key"] = api_key[:2] + "*" * (len(api_key) - 4) + api_key[-2:]
+        config["zhipu_api_key"] = api_key[:2] + "*" * (len(api_key) - 4) + api_key[-2:]
     elif api_key:
-        config["qwen_api_key"] = "****"
+        config["zhipu_api_key"] = "****"
     return config
