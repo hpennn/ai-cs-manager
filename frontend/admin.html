@@ -45,6 +45,14 @@
         .ws-connected { background: #34d399; }
         .ws-disconnected { background: #f87171; }
         .ws-connecting { background: #fbbf24; animation: pulse 1s infinite; }
+        .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); z-index: 5000; display: flex; align-items: center; justify-content: center; animation: fadeIn 0.2s ease; }
+        .modal-content { background: #1a1a2e; border: 1px solid rgba(79,70,229,0.3); border-radius: 16px; width: 480px; max-width: 90vw; box-shadow: 0 20px 60px rgba(0,0,0,0.5); animation: modalSlide 0.3s ease; }
+        @keyframes modalSlide { from { opacity: 0; transform: translateY(-20px) scale(0.95); } to { opacity: 1; transform: translateY(0) scale(1); } }
+        .channel-badge { display: inline-flex; align-items: center; gap: 3px; padding: 1px 7px; border-radius: 9999px; font-size: 10px; font-weight: 600; }
+        .channel-wechat { background: rgba(34,197,94,0.15); color: #4ade80; border: 1px solid rgba(34,197,94,0.3); }
+        .channel-douyin { background: rgba(255,255,255,0.1); color: #e5e5e5; border: 1px solid rgba(255,255,255,0.2); }
+        .channel-web { background: rgba(59,130,246,0.15); color: #60a5fa; border: 1px solid rgba(59,130,246,0.3); }
+        .channel-custom { background: rgba(156,163,175,0.15); color: #9ca3af; border: 1px solid rgba(156,163,175,0.3); }
     </style>
 </head>
 <body>
@@ -202,8 +210,14 @@
                     <!-- 列表头部 -->
                     <div class="p-3 border-b border-gray-700/30 space-y-2">
                         <div class="flex items-center gap-2">
-                            <button @click="loadSessions()" class="flex-1 py-2 text-sm rounded-lg gradient-bg text-white hover:opacity-90 transition">
-                                刷新列表
+                            <button @click="showCreateSessionModal = true" 
+                                    class="flex-1 py-2 text-sm rounded-lg text-white hover:opacity-90 transition"
+                                    style="background: linear-gradient(135deg, #059669, #10b981);">
+                                + 添加会话
+                            </button>
+                            <button @click="loadSessions()" class="py-2 px-3 text-sm rounded-lg text-indigo-400 hover:bg-indigo-500/10 border border-indigo-500/30 transition"
+                                    title="刷新列表">
+                                🔄
                             </button>
                             <button @click="deleteSelectedSession()" x-show="selectedSession" 
                                     class="py-2 px-3 text-sm rounded-lg text-red-400 hover:bg-red-500/10 border border-red-500/30 transition"
@@ -240,17 +254,28 @@
                             <button class="session-item w-full text-left px-4 py-3 border-b border-gray-700/20"
                                     :class="selectedSession === s.session_id ? 'active' : ''"
                                     @click="selectSession(s.session_id)">
-                                <!-- 第一行：ID + 模式标签 -->
+                                <!-- 第一行：渠道标签 + 商家名称 + 模式标签 -->
                                 <div class="flex items-center justify-between mb-1.5">
-                                    <span class="text-xs text-gray-300 font-mono truncate max-w-[160px]" 
-                                          x-text="s.customer_id || s.session_id?.substring(0, 12) || '未知'"></span>
-                                    <span class="mode-badge" 
+                                    <div class="flex items-center gap-1.5 flex-1 min-w-0">
+                                        <!-- 渠道标签 -->
+                                        <span class="channel-badge"
+                                              :class="s.channel === 'wechat' ? 'channel-wechat' : (s.channel === 'douyin' ? 'channel-douyin' : (s.channel === 'web' ? 'channel-web' : 'channel-custom'))"
+                                              x-text="s.channel === 'wechat' ? '💬 微信' : (s.channel === 'douyin' ? '🎵 抖音' : (s.channel === 'web' ? '🌐 网页' : '⚙️ 自定义'))"></span>
+                                        <!-- 外链图标 -->
+                                        <a x-show="s.login_url" :href="s.login_url" target="_blank" rel="noopener"
+                                           @click.stop
+                                           class="text-xs text-gray-500 hover:text-indigo-400 transition" title="打开商家后台">🔗</a>
+                                    </div>
+                                    <span class="mode-badge ml-1 flex-shrink-0" 
                                           :class="s.mode === 'human' ? 'mode-human' : 'mode-auto'"
                                           x-text="s.mode === 'human' ? '👤 人工' : '🤖 自动'"></span>
                                 </div>
-                                <!-- 第二行：最后消息预览 -->
+                                <!-- 第二行：商家名称 / 客户ID -->
+                                <div class="text-xs text-gray-300 truncate mb-1" 
+                                     x-text="s.merchant_name || s.customer_id || s.session_id?.substring(0, 12) || '未知'"></div>
+                                <!-- 第三行：最后消息预览 -->
                                 <div class="text-xs text-gray-500 truncate mb-1" x-text="s.last_message || '暂无消息'"></div>
-                                <!-- 第三行：时间 + 消息数 -->
+                                <!-- 第四行：时间 + 消息数 -->
                                 <div class="flex items-center justify-between">
                                     <span class="text-xs text-gray-600" x-text="s.last_message_time ? formatTime(s.last_message_time) : ''"></span>
                                     <span class="text-xs text-gray-600" x-text="(s.message_count || 0) + '条'"></span>
@@ -541,6 +566,67 @@
 
         </main>
     </div>
+
+    <!-- 创建会话弹窗 -->
+    <div x-show="showCreateSessionModal" x-transition class="modal-overlay" @click.self="showCreateSessionModal = false">
+        <div class="modal-content">
+            <!-- 弹窗头部 -->
+            <div class="flex items-center justify-between px-6 py-4 border-b border-gray-700/30">
+                <h3 class="text-base font-semibold text-white">添加会话</h3>
+                <button @click="showCreateSessionModal = false" class="text-gray-400 hover:text-white transition text-lg">✕</button>
+            </div>
+            <!-- 弹窗内容 -->
+            <div class="px-6 py-5 space-y-4">
+                <!-- 渠道类型 -->
+                <div>
+                    <label class="block text-sm text-gray-400 mb-2">渠道类型 <span class="text-red-400">*</span></label>
+                    <select x-model="newSessionForm.channel"
+                            class="w-full px-4 py-2.5 rounded-lg text-sm text-white outline-none focus:ring-2 focus:ring-indigo-500 appearance-none cursor-pointer"
+                            style="background: #2a2a3e; border: 1px solid #333;">
+                        <option value="" disabled class="text-gray-500">请选择渠道类型</option>
+                        <option value="wechat">💬 微信客服</option>
+                        <option value="douyin">🎵 抖音客服</option>
+                        <option value="web">🌐 网页客服</option>
+                        <option value="custom">⚙️ 自定义</option>
+                    </select>
+                </div>
+                <!-- 商家/店铺名称 -->
+                <div>
+                    <label class="block text-sm text-gray-400 mb-2">商家/店铺名称 <span class="text-red-400">*</span></label>
+                    <input type="text" x-model="newSessionForm.merchant_name" placeholder="输入商家或店铺名称..."
+                           class="w-full px-4 py-2.5 rounded-lg text-sm text-white outline-none focus:ring-2 focus:ring-indigo-500"
+                           style="background: #2a2a3e; border: 1px solid #333;">
+                </div>
+                <!-- 客服登录链接 -->
+                <div>
+                    <label class="block text-sm text-gray-400 mb-2">客服登录链接 <span class="text-xs text-gray-600">（可选）</span></label>
+                    <input type="url" x-model="newSessionForm.login_url" placeholder="https://..."
+                           class="w-full px-4 py-2.5 rounded-lg text-sm text-white outline-none focus:ring-2 focus:ring-indigo-500"
+                           style="background: #2a2a3e; border: 1px solid #333;">
+                </div>
+                <!-- 备注说明 -->
+                <div>
+                    <label class="block text-sm text-gray-400 mb-2">备注说明 <span class="text-xs text-gray-600">（可选）</span></label>
+                    <textarea x-model="newSessionForm.description" placeholder="备注说明..." rows="2"
+                              class="w-full px-4 py-2.5 rounded-lg text-sm text-white outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
+                              style="background: #2a2a3e; border: 1px solid #333;"></textarea>
+                </div>
+            </div>
+            <!-- 弹窗底部 -->
+            <div class="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-700/30">
+                <button @click="showCreateSessionModal = false"
+                        class="px-5 py-2 rounded-lg text-sm text-gray-400 hover:text-white hover:bg-white/5 transition">
+                    取消
+                </button>
+                <button @click="createSession()" :disabled="creatingSession || !newSessionForm.channel || !newSessionForm.merchant_name.trim()"
+                        class="px-6 py-2 rounded-lg text-sm text-white hover:opacity-90 transition disabled:opacity-50"
+                        style="background: linear-gradient(135deg, #4f46e5, #7c3aed);">
+                    <span x-show="!creatingSession">创建</span>
+                    <span x-show="creatingSession">创建中...</span>
+                </button>
+            </div>
+        </div>
+    </div>
 </div>
 
 <script>
@@ -589,6 +675,11 @@ function adminApp() {
         hasNewMessages: false,
         newSessionCount: 0,
         previousSessionIds: [],
+
+        // 创建会话弹窗
+        showCreateSessionModal: false,
+        creatingSession: false,
+        newSessionForm: { channel: '', merchant_name: '', description: '', login_url: '' },
 
         // WebSocket
         wsState: 'disconnected', // disconnected | connecting | connected
@@ -831,6 +922,40 @@ function adminApp() {
                 this.loadSessions();
             } catch (e) {
                 this.showToast('删除失败', 'error');
+            }
+        },
+
+        // 创建新会话
+        async createSession() {
+            if (!this.newSessionForm.channel || !this.newSessionForm.merchant_name.trim()) return;
+            this.creatingSession = true;
+
+            try {
+                const body = {
+                    channel: this.newSessionForm.channel,
+                    merchant_name: this.newSessionForm.merchant_name.trim(),
+                    mode: 'auto'
+                };
+                if (this.newSessionForm.description.trim()) {
+                    body.description = this.newSessionForm.description.trim();
+                }
+                if (this.newSessionForm.login_url.trim()) {
+                    body.login_url = this.newSessionForm.login_url.trim();
+                }
+
+                await this.apiCall('/api/sessions', {
+                    method: 'POST',
+                    body: JSON.stringify(body)
+                });
+
+                this.showToast('会话创建成功');
+                this.showCreateSessionModal = false;
+                this.newSessionForm = { channel: '', merchant_name: '', description: '', login_url: '' };
+                this.loadSessions();
+            } catch (e) {
+                this.showToast('创建失败：' + (e.message || '未知错误'), 'error');
+            } finally {
+                this.creatingSession = false;
             }
         },
 
