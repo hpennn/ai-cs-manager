@@ -53,22 +53,22 @@ class CreateSessionRequest(BaseModel):
 
 # ---- 通义千问 API 调用 ----
 
-async def call_qwen(messages: list) -> str:
-    """调用通义千问API"""
-    api_key = get_config_value("qwen_api_key", "")
+async def call_zhipu(messages: list) -> str:
+    """调用智谱AI API"""
+    api_key = get_config_value("zhipu_api_key", "4854154d31a042e2a8d8eee754097757.WDct0BiBIxyzswdH")
     if not api_key:
-        return "请先在设置中配置通义千问API Key"
+        return "请先在设置中配置智谱AI API Key"
 
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+                get_config_value("zhipu_base_url", "https://open.bigmodel.cn/api/paas/v4") + "/chat/completions",
                 headers={
                     "Authorization": f"Bearer {api_key}",
                     "Content-Type": "application/json"
                 },
                 json={
-                    "model": "qwen-turbo",
+                    "model": get_config_value("zhipu_model", "glm-4-flash"),
                     "messages": messages
                 },
                 timeout=30
@@ -226,7 +226,7 @@ async def process_chat(session_id: str, message: str) -> dict:
     api_messages.append({"role": "user", "content": message})
 
     # 调用AI
-    reply = await call_qwen(api_messages)
+    reply = await call_zhipu(api_messages)
 
     # 保存对话记录
     history.append({
