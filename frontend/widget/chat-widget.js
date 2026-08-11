@@ -170,7 +170,7 @@
             renderChat();
         }
 
-        // 发送消息
+        // 发送消息（SSE 流式）
         async function handleSend() {
             const input = container.querySelector('#csInput');
             const sendBtn = container.querySelector('#csSendBtn');
@@ -183,12 +183,23 @@
             refreshMessages();
             scrollToBottom();
 
-            // 显示 loading
+            // 禁用发送按钮
             sendBtn.disabled = true;
-            addLoadingBubble();
+
+            // 添加 AI 消息气泡（初始为空，带打字光标）
+            const aiMsgIndex = messages.length;
+            messages.push({ role: 'assistant', content: '', streaming: true });
+            refreshMessages();
+            scrollToBottom();
+
+            // 启动光标闪烁
+            startTypingCursor();
+
+            let fullReply = '';
+            let sourcesData = [];
 
             try {
-                const res = await fetch(API_BASE + '/api/chat', {
+                const res = await fetch(API_BASE + '/api/chat/stream', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -197,17 +208,73 @@
                     })
                 });
 
-                removeLoadingBubble();
-
                 if (!res.ok) throw new Error('请求失败');
 
-                const data = await res.json();
-                const reply = data.reply || data.message || data.content || data.response || '抱歉，暂时无法回复。';
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder('utf-8');
+                let buffer = '';
 
-                messages.push({ role: 'assistant', content: reply });
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+
+                    // 按 SSE 格式解析（以 \n\n 分隔事件）
+                    const events = buffer.split('\n\n');
+                    buffer = events.pop() || '';
+
+                    for (const event of events) {
+                        const lines = event.split('\n');
+                        for (const line of lines) {
+                            if (!line.startsWith('data: ')) continue;
+                            const dataStr = line.slice(6).trim();
+                            if (!dataStr) continue;
+
+                            if (dataStr === '[DONE]') {
+                                // 流式结束
+                                stopTypingCursor();
+                                if (messages[aiMsgIndex]) {
+                                    messages[aiMsgIndex].streaming = false;
+                                    messages[aiMsgIndex].sources = sourcesData;
+                                }
+                                refreshMessages();
+                                scrollToBottom();
+                                return;
+                            }
+
+                            try {
+                                const data = JSON.parse(dataStr);
+                                if (data.sources) {
+                                    sourcesData = data.sources;
+                                }
+                                if (data.content) {
+                                    fullReply += data.content;
+                                    if (messages[aiMsgIndex]) {
+                                        messages[aiMsgIndex].content = fullReply;
+                                    }
+                                    updateStreamingMessage();
+                                    scrollToBottom();
+                                }
+                            } catch (e) {
+                                // 非 JSON 数据，忽略
+                            }
+                        }
+                    }
+                }
+
+                // 如果没有收到 [DONE] 但流结束了，做收尾
+                stopTypingCursor();
+                if (messages[aiMsgIndex]) {
+                    messages[aiMsgIndex].streaming = false;
+                    messages[aiMsgIndex].sources = sourcesData;
+                }
             } catch (e) {
-                removeLoadingBubble();
-                messages.push({ role: 'assistant', content: '抱歉，网络异常，请稍后再试。' });
+                stopTypingCursor();
+                if (messages[aiMsgIndex]) {
+                    messages[aiMsgIndex].content = '抱歉，网络异常，请稍后再试。';
+                    messages[aiMsgIndex].streaming = false;
+                }
             } finally {
                 sendBtn.disabled = false;
                 refreshMessages();
@@ -216,21 +283,54 @@
             }
         }
 
-        // 添加 loading 气泡
-        function addLoadingBubble() {
+        // 更新流式消息（局部更新，避免全量重渲染导致光标闪烁）
+        function updateStreamingMessage() {
             const msgContainer = container.querySelector('#csMessages');
             if (!msgContainer) return;
-            const loading = document.createElement('div');
-            loading.className = 'cs-msg cs-msg-ai cs-loading-bubble';
-            loading.innerHTML = '<div class="cs-bubble-ai"><div class="cs-dots"><span></span><span></span><span></span></div></div>';
-            msgContainer.appendChild(loading);
-            scrollToBottom();
+            const bubbles = msgContainer.querySelectorAll('.cs-bubble-ai');
+            if (bubbles.length === 0) return;
+            const lastBubble = bubbles[bubbles.length - 1];
+            const msg = messages[messages.length - 1];
+            if (msg && msg.streaming) {
+                // 找到光标元素，保留它
+                const cursor = lastBubble.querySelector('.cs-typing-cursor');
+                lastBubble.textContent = msg.content;
+                if (cursor) lastBubble.appendChild(cursor);
+            }
         }
 
-        // 移除 loading 气泡
-        function removeLoadingBubble() {
-            const loading = container.querySelector('.cs-loading-bubble');
-            if (loading) loading.remove();
+        // 打字光标
+        let typingCursorInterval = null;
+        function startTypingCursor() {
+            stopTypingCursor();
+            // 在最后一个 AI 气泡中添加光标
+            const msgContainer = container.querySelector('#csMessages');
+            if (!msgContainer) return;
+            const bubbles = msgContainer.querySelectorAll('.cs-bubble-ai');
+            if (bubbles.length === 0) return;
+            const lastBubble = bubbles[bubbles.length - 1];
+            let cursor = lastBubble.querySelector('.cs-typing-cursor');
+            if (!cursor) {
+                cursor = document.createElement('span');
+                cursor.className = 'cs-typing-cursor';
+                cursor.textContent = '▌';
+                lastBubble.appendChild(cursor);
+            }
+            typingCursorInterval = setInterval(function() {
+                if (cursor) {
+                    cursor.style.opacity = cursor.style.opacity === '0' ? '1' : '0';
+                }
+            }, 530);
+        }
+
+        function stopTypingCursor() {
+            if (typingCursorInterval) {
+                clearInterval(typingCursorInterval);
+                typingCursorInterval = null;
+            }
+            // 移除所有光标
+            const cursors = container.querySelectorAll('.cs-typing-cursor');
+            cursors.forEach(function(c) { c.remove(); });
         }
 
         // 刷新消息列表
@@ -371,6 +471,18 @@
             @keyframes csDotPulse {
                 0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
                 40% { opacity: 1; transform: scale(1); }
+            }
+
+            /* 打字光标 */
+            .cs-typing-cursor {
+                display: inline-block;
+                margin-left: 2px;
+                color: #a78bfa;
+                font-weight: bold;
+                font-size: 14px;
+                line-height: 1;
+                vertical-align: -2px;
+                transition: opacity 0.2s ease;
             }
 
             /* 输入区 */
