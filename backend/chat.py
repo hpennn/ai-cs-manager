@@ -8,6 +8,7 @@ from typing import List, Optional
 
 import httpx
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from knowledge import get_chroma_client
@@ -53,22 +54,22 @@ class CreateSessionRequest(BaseModel):
 
 # ---- 通义千问 API 调用 ----
 
-async def call_zhipu(messages: list) -> str:
-    """调用智谱AI API"""
-    api_key = get_config_value("zhipu_api_key", "4854154d31a042e2a8d8eee754097757.WDct0BiBIxyzswdH")
+async def call_qwen(messages: list) -> str:
+    """调用通义千问API"""
+    api_key = get_config_value("qwen_api_key", "")
     if not api_key:
-        return "请先在设置中配置智谱AI API Key"
+        return "请先在设置中配置通义千问API Key"
 
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                get_config_value("zhipu_base_url", "https://open.bigmodel.cn/api/paas/v4") + "/chat/completions",
+                "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
                 headers={
                     "Authorization": f"Bearer {api_key}",
                     "Content-Type": "application/json"
                 },
                 json={
-                    "model": get_config_value("zhipu_model", "glm-4-flash"),
+                    "model": "qwen-turbo",
                     "messages": messages
                 },
                 timeout=30
@@ -84,6 +85,59 @@ async def call_zhipu(messages: list) -> str:
         return "无法连接到AI服务，请检查网络连接"
     except Exception as e:
         return f"调用AI服务出错: {str(e)}"
+
+
+async def call_qwen_stream(messages: list):
+    """流式调用通义千问API，逐块yield content delta"""
+    api_key = get_config_value("qwen_api_key", "")
+    if not api_key:
+        yield "请先在设置中配置通义千问API Key"
+        return
+
+    try:
+        async with httpx.AsyncClient() as client:
+            async with client.stream(
+                "POST",
+                "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "qwen-turbo",
+                    "messages": messages,
+                    "stream": True
+                },
+                timeout=60
+            ) as resp:
+                if resp.status_code != 200:
+                    body = await resp.aread()
+                    yield f"API调用异常: {resp.status_code} - {body.decode('utf-8', errors='ignore')}"
+                    return
+
+                async for line in resp.aiter_lines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    if line.startswith("data: "):
+                        line = line[6:]
+                    if line == "[DONE]":
+                        break
+                    try:
+                        data = json.loads(line)
+                        if "choices" in data and len(data["choices"]) > 0:
+                            delta = data["choices"][0].get("delta", {})
+                            content = delta.get("content", "")
+                            if content:
+                                yield content
+                    except (json.JSONDecodeError, KeyError):
+                        continue
+    except httpx.TimeoutException:
+        yield "AI服务响应超时，请稍后重试"
+    except httpx.ConnectError:
+        yield "无法连接到AI服务，请检查网络连接"
+    except Exception as e:
+        yield f"调用AI服务出错: {str(e)}"
 
 
 # ---- 知识检索 ----
@@ -226,7 +280,7 @@ async def process_chat(session_id: str, message: str) -> dict:
     api_messages.append({"role": "user", "content": message})
 
     # 调用AI
-    reply = await call_zhipu(api_messages)
+    reply = await call_qwen(api_messages)
 
     # 保存对话记录
     history.append({
@@ -429,6 +483,91 @@ async def chat(request: ChatRequest):
 
     result = await process_chat(request.session_id, request.message)
     return result
+
+
+@router.post("/api/chat/stream")
+async def chat_stream(request: ChatRequest):
+    """流式对话接口（SSE）"""
+    if not request.message.strip():
+        raise HTTPException(status_code=400, detail="消息不能为空")
+
+    session_id = request.session_id
+    message = request.message
+
+    # 检索相关知识
+    sources = retrieve_knowledge(message, top_k=3)
+
+    # 构建上下文
+    context_parts = []
+    if sources:
+        for i, src in enumerate(sources, 1):
+            context_parts.append(f"[知识{i}] {src['text']}")
+
+    # 构建系统提示
+    system_prompt = get_config_value(
+        "system_prompt",
+        "你是一个专业的电商客服助手，根据知识库中的信息回答用户问题。如果知识库中没有相关信息，请礼貌地告知用户并建议联系人工客服。回答要简洁、准确、友好。"
+    )
+
+    system_content = system_prompt
+    if context_parts:
+        system_content += "\n\n以下是从知识库中检索到的相关信息，请参考这些信息回答用户问题：\n" + "\n\n".join(context_parts)
+
+    # 加载历史对话
+    history = load_session_messages(session_id)
+
+    # 构建发送给API的消息列表
+    api_messages = [{"role": "system", "content": system_content}]
+
+    # 加入最近的对话历史（最多保留最近10轮）
+    recent_history = history[-20:] if len(history) > 20 else history
+    for msg in recent_history:
+        api_messages.append({"role": msg["role"], "content": msg["content"]})
+
+    # 加入当前用户消息
+    api_messages.append({"role": "user", "content": message})
+
+    # 先发送 sources 信息（第一条SSE事件）
+    sources_json = json.dumps({"sources": sources}, ensure_ascii=False)
+
+    async def event_generator():
+        # 第一条：发送检索来源
+        yield f"data: {sources_json}\n\n"
+
+        # 流式接收AI回复，累积完整回复
+        full_reply = ""
+        async for delta in call_qwen_stream(api_messages):
+            full_reply += delta
+            chunk_json = json.dumps({"content": delta}, ensure_ascii=False)
+            yield f"data: {chunk_json}\n\n"
+
+        # 保存对话记录（流式结束后统一保存）
+        history.append({
+            "role": "user",
+            "content": message,
+            "timestamp": datetime.now().isoformat()
+        })
+        history.append({
+            "role": "assistant",
+            "content": full_reply,
+            "timestamp": datetime.now().isoformat(),
+            "sources": sources
+        })
+        save_session_messages(session_id, history)
+        update_session_index(session_id)
+
+        # 发送结束标记
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
 
 
 # ---- 会话管理接口 ----
