@@ -2,20 +2,23 @@
 
 import os
 import sys
+import secrets
+from datetime import datetime, timedelta
+from typing import Optional
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel
 
 # 确保项目根目录在 path 中
 sys.path.insert(0, os.path.dirname(__file__))
 
-from config import ensure_config_file
+from config import ensure_config_file, load_config, save_config, get_masked_config
 from knowledge import router as knowledge_router
 from chat import router as chat_router
-from config import load_config, save_config
 from stats import router as stats_router
 
 # ---- 初始化目录 ----
@@ -35,7 +38,7 @@ ensure_config_file()
 app = FastAPI(
     title="AI客服管理系统",
     description="本地部署的AI客服管理系统后端服务",
-    version="1.0.0"
+    version="1.1.0"
 )
 
 # CORS 配置
@@ -47,48 +50,140 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ---- 挂载路由 ----
+# ---- Token 存储（内存） ----
+# token -> {"expires_at": datetime}
+active_tokens: dict = {}
+TOKEN_TTL_HOURS = 24  # token 有效期 24 小时
+
+
+def clean_expired_tokens():
+    """清理过期 token"""
+    now = datetime.now()
+    expired = [t for t, info in active_tokens.items() if info["expires_at"] < now]
+    for t in expired:
+        del active_tokens[t]
+
+
+def verify_token(authorization: Optional[str] = Header(None)):
+    """验证 Bearer Token"""
+    clean_expired_tokens()
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="未登录或登录已过期")
+    token = authorization[7:]
+    if token not in active_tokens:
+        raise HTTPException(status_code=401, detail="登录已过期，请重新登录")
+    if active_tokens[token]["expires_at"] < datetime.now():
+        del active_tokens[token]
+        raise HTTPException(status_code=401, detail="登录已过期，请重新登录")
+    return True
+
+
+# ---- 认证 API ----
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class LoginResponse(BaseModel):
+    token: str
+    username: str
+    message: str = "登录成功"
+
+
+@app.post("/api/auth/login", response_model=LoginResponse, tags=["认证"])
+async def login(req: LoginRequest):
+    """管理员登录"""
+    config = load_config()
+    admin_username = config.get("admin_username", "admin")
+    admin_password = config.get("admin_password", "admin123")
+
+    if not req.username or not req.password:
+        raise HTTPException(status_code=400, detail="账号和密码不能为空")
+
+    if req.username != admin_username or req.password != admin_password:
+        raise HTTPException(status_code=401, detail="账号或密码错误")
+
+    # 生成 token
+    token = secrets.token_hex(32)
+    expires_at = datetime.now() + timedelta(hours=TOKEN_TTL_HOURS)
+    active_tokens[token] = {"expires_at": expires_at}
+
+    return LoginResponse(
+        token=token,
+        username=admin_username,
+        message="登录成功"
+    )
+
+
+@app.post("/api/auth/logout", tags=["认证"])
+async def logout(authorization: Optional[str] = Header(None)):
+    """退出登录"""
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization[7:]
+        if token in active_tokens:
+            del active_tokens[token]
+    return {"message": "已退出登录"}
+
+
+@app.get("/api/auth/verify", tags=["认证"])
+async def verify(valid: bool = Depends(verify_token)):
+    """验证登录状态"""
+    return {"valid": True}
+
+
+# ---- 挂载路由（需要认证的路由通过 Depends 控制）----
+# 注意：为了保持向后兼容，知识库、会话、统计等 API 暂不强制认证
+# 仅将配置等敏感操作纳入认证。如果需要全面认证，可在各 router 中添加。
 app.include_router(knowledge_router)
 app.include_router(chat_router)
 app.include_router(stats_router)
 
 
-# ---- 配置 API ----
+# ---- 配置 API（需要认证） ----
 
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-from config import get_masked_config
+from fastapi import APIRouter
 
 config_router = APIRouter(prefix="/api/config", tags=["配置"])
 
 
 class ConfigUpdate(BaseModel):
-    qwen_api_key: str = None
-    system_prompt: str = None
-    welcome_message: str = None
-    company_name: str = None
+    qwen_api_key: Optional[str] = None
+    zhipu_api_key: Optional[str] = None
+    system_prompt: Optional[str] = None
+    welcome_message: Optional[str] = None
+    company_name: Optional[str] = None
+    admin_username: Optional[str] = None
+    admin_password: Optional[str] = None
 
 
 @config_router.get("")
-async def get_config():
+async def get_config(valid: bool = Depends(verify_token)):
     """获取配置（api_key脱敏显示）"""
     return get_masked_config()
 
 
 @config_router.post("")
-async def update_config(update: ConfigUpdate):
+async def update_config(update: ConfigUpdate, valid: bool = Depends(verify_token)):
     """更新配置"""
     config = load_config()
+    if update.zhipu_api_key is not None:
+        if "*" not in update.zhipu_api_key:
+            config["zhipu_api_key"] = update.zhipu_api_key
     if update.qwen_api_key is not None:
-        # 如果传的是脱敏值（包含*），则不更新
         if "*" not in update.qwen_api_key:
-            config["qwen_api_key"] = update.qwen_api_key
+            config["zhipu_api_key"] = update.qwen_api_key
     if update.system_prompt is not None:
         config["system_prompt"] = update.system_prompt
     if update.welcome_message is not None:
         config["welcome_message"] = update.welcome_message
     if update.company_name is not None:
         config["company_name"] = update.company_name
+    if update.admin_username is not None and update.admin_username.strip():
+        config["admin_username"] = update.admin_username.strip()
+    if update.admin_password is not None and update.admin_password.strip():
+        if len(update.admin_password.strip()) < 6:
+            raise HTTPException(status_code=400, detail="密码长度不能少于6位")
+        config["admin_password"] = update.admin_password.strip()
     save_config(config)
     return {"message": "配置更新成功"}
 
@@ -104,7 +199,7 @@ async def serve_frontend():
     admin_path = os.path.join(FRONTEND_DIR, "admin.html")
     if os.path.exists(admin_path):
         return FileResponse(admin_path)
-    return {"message": "AI客服管理系统后端运行中", "version": "1.0.0"}
+    return {"message": "AI客服管理系统后端运行中", "version": "1.1.0"}
 
 
 @app.get("/widget/chat-widget.js")
