@@ -53,6 +53,144 @@
         .channel-douyin { background: rgba(255,255,255,0.1); color: #e5e5e5; border: 1px solid rgba(255,255,255,0.2); }
         .channel-web { background: rgba(59,130,246,0.15); color: #60a5fa; border: 1px solid rgba(59,130,246,0.3); }
         .channel-custom { background: rgba(156,163,175,0.15); color: #9ca3af; border: 1px solid rgba(156,163,175,0.3); }
+
+        /* ===== 登录页样式 ===== */
+        .login-page {
+            position: fixed;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #0f0f1a;
+            z-index: 10000;
+        }
+        .login-card {
+            width: 400px;
+            max-width: 90vw;
+            background: #1a1a2e;
+            border: 1px solid rgba(79, 70, 229, 0.3);
+            border-radius: 20px;
+            padding: 40px 36px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+            animation: loginFadeIn 0.4s ease;
+        }
+        @keyframes loginFadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .login-logo {
+            width: 56px;
+            height: 56px;
+            border-radius: 14px;
+            background: linear-gradient(135deg, #4f46e5, #7c3aed);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            font-size: 20px;
+            margin: 0 auto 16px;
+        }
+        .login-title {
+            text-align: center;
+            font-size: 20px;
+            font-weight: 600;
+            color: #fff;
+            margin-bottom: 4px;
+        }
+        .login-subtitle {
+            text-align: center;
+            font-size: 13px;
+            color: #9ca3af;
+            margin-bottom: 28px;
+        }
+        .login-field {
+            margin-bottom: 18px;
+        }
+        .login-field label {
+            display: block;
+            font-size: 13px;
+            color: #9ca3af;
+            margin-bottom: 8px;
+            font-weight: 500;
+        }
+        .login-field input {
+            width: 100%;
+            padding: 12px 14px;
+            background: #0f0f1a;
+            border: 1px solid #333;
+            border-radius: 10px;
+            color: #fff;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+        .login-field input:focus {
+            border-color: #4f46e5;
+            box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.15);
+        }
+        .login-field input.error {
+            border-color: #ef4444;
+            box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.1);
+        }
+        .login-error-text {
+            color: #f87171;
+            font-size: 12px;
+            margin-top: 6px;
+            min-height: 16px;
+        }
+        .login-btn {
+            width: 100%;
+            padding: 13px;
+            background: linear-gradient(135deg, #4f46e5, #7c3aed);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.15s, opacity 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+        .login-btn:hover:not(:disabled) {
+            transform: translateY(-1px);
+        }
+        .login-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        .login-btn .btn-spinner {
+            width: 18px;
+            height: 18px;
+            border: 2px solid rgba(255,255,255,0.2);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        .login-footer {
+            text-align: center;
+            margin-top: 20px;
+            font-size: 12px;
+            color: #6b7280;
+        }
+        .login-alert {
+            padding: 10px 14px;
+            border-radius: 8px;
+            font-size: 13px;
+            margin-bottom: 18px;
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            color: #fca5a5;
+            animation: fadeIn 0.3s ease;
+        }
+        .login-alert.success {
+            background: rgba(16, 185, 129, 0.1);
+            border-color: rgba(16, 185, 129, 0.3);
+            color: #6ee7b7;
+        }
     </style>
 </head>
 <body>
@@ -65,8 +203,60 @@
              x-transition @click="toast.show = false"></div>
     </template>
 
+    <!-- 登录页 -->
+    <div x-show="!isLoggedIn" class="login-page" x-transition>
+        <div class="login-card">
+            <div class="login-logo">AI</div>
+            <div class="login-title">AI客服管理系统</div>
+            <div class="login-subtitle">请登录以继续使用</div>
+
+            <template x-if="loginAlert">
+                <div class="login-alert" :class="{ success: loginAlertType === 'success' }" x-text="loginAlert"></div>
+            </template>
+
+            <form @submit.prevent="handleLogin" autocomplete="off">
+                <div class="login-field">
+                    <label for="login-username">管理员账号</label>
+                    <input
+                        id="login-username"
+                        type="text"
+                        x-model="loginForm.username"
+                        :class="{ error: loginErrors.username }"
+                        placeholder="请输入账号"
+                        :disabled="loginLoading"
+                        autofocus
+                    >
+                    <div class="login-error-text" x-text="loginErrors.username || ' '"></div>
+                </div>
+
+                <div class="login-field">
+                    <label for="login-password">登录密码</label>
+                    <input
+                        id="login-password"
+                        type="password"
+                        x-model="loginForm.password"
+                        :class="{ error: loginErrors.password }"
+                        placeholder="请输入密码（至少6位）"
+                        :disabled="loginLoading"
+                        @keydown.enter="handleLogin"
+                    >
+                    <div class="login-error-text" x-text="loginErrors.password || ' '"></div>
+                </div>
+
+                <button type="submit" class="login-btn" :disabled="loginLoading">
+                    <template x-if="loginLoading">
+                        <div class="btn-spinner"></div>
+                    </template>
+                    <span x-text="loginLoading ? '登录中...' : '登 录'"></span>
+                </button>
+            </form>
+
+            <div class="login-footer">默认账号 admin / admin123</div>
+        </div>
+    </div>
+
     <!-- 左侧导航栏 -->
-    <aside class="w-[220px] flex-shrink-0 flex flex-col" style="background: #1a1a2e;">
+    <aside x-show="isLoggedIn" class="w-[220px] flex-shrink-0 flex flex-col" style="background: #1a1a2e;">
         <!-- Logo -->
         <div class="p-5 border-b border-gray-700/50">
             <div class="flex items-center gap-3">
@@ -102,11 +292,14 @@
     </aside>
 
     <!-- 右侧内容区 -->
-    <div class="flex-1 flex flex-col overflow-hidden">
+    <div x-show="isLoggedIn" class="flex-1 flex flex-col overflow-hidden">
         <!-- 顶部栏 -->
         <header class="h-14 flex items-center justify-between px-6 border-b border-gray-700/30 flex-shrink-0" style="background: #12121f;">
             <h1 class="text-base font-semibold text-white" x-text="menuItems.find(m => m.id === currentTab)?.label || ''"></h1>
             <div class="flex items-center gap-4">
+                <button @click="logout()" class="text-xs text-gray-400 hover:text-white transition px-3 py-1.5 rounded-lg border border-gray-600/50 hover:border-gray-500">
+                    退出登录
+                </button>
                 <!-- WebSocket状态 -->
                 <div class="ws-status" x-show="currentTab === 'sessions'">
                     <span class="ws-dot" :class="wsState === 'connected' ? 'ws-connected' : (wsState === 'connecting' ? 'ws-connecting' : 'ws-disconnected')"></span>
@@ -645,6 +838,14 @@ function adminApp() {
         loading: false,
         backendOnline: false,
         backendStatus: '检测中...',
+        // 登录状态
+        isLoggedIn: false,
+        loginForm: { username: '', password: '' },
+        loginErrors: { username: '', password: '' },
+        loginLoading: false,
+        loginAlert: '',
+        loginAlertType: 'error',
+        authToken: '',
 
         // 通知
         toast: { show: false, msg: '', type: 'success' },
@@ -715,11 +916,16 @@ function adminApp() {
 
         // 初始化
         init() {
+            // 从 localStorage 读取 token
+            this.authToken = localStorage.getItem('admin_token') || '';
+            if (this.authToken) {
+                // 验证 token 有效性
+                this.verifyLogin();
+            }
             this.checkBackend();
-            this.loadStats();
             // 定时刷新统计数据
             setInterval(() => {
-                if (this.currentTab === 'overview') {
+                if (this.isLoggedIn && this.currentTab === 'overview') {
                     this.loadStats();
                 }
             }, 30000);
@@ -729,6 +935,139 @@ function adminApp() {
         showToast(msg, type = 'success') {
             this.toast = { show: true, msg, type };
             setTimeout(() => { this.toast.show = false; }, 3000);
+        },
+
+        // ===== 登录认证 =====
+        validateLoginForm() {
+            let valid = true;
+            this.loginErrors = { username: '', password: '' };
+
+            if (!this.loginForm.username.trim()) {
+                this.loginErrors.username = '请输入管理员账号';
+                valid = false;
+            }
+
+            if (!this.loginForm.password) {
+                this.loginErrors.password = '请输入密码';
+                valid = false;
+            } else if (this.loginForm.password.length < 6) {
+                this.loginErrors.password = '密码长度不能少于6位';
+                valid = false;
+            }
+
+            return valid;
+        },
+
+        async handleLogin() {
+            this.loginAlert = '';
+
+            if (!this.validateLoginForm()) {
+                return;
+            }
+
+            this.loginLoading = true;
+
+            try {
+                const res = await fetch(this.API_BASE + '/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        username: this.loginForm.username.trim(),
+                        password: this.loginForm.password
+                    })
+                });
+
+                const data = await res.json().catch(() => ({}));
+
+                if (!res.ok) {
+                    const errMsg = data.detail || data.message || `登录失败 (HTTP ${res.status})`;
+                    this.loginAlert = errMsg;
+                    this.loginAlertType = 'error';
+                    // 标记错误字段
+                    if (res.status === 401 || errMsg.includes('账号') || errMsg.includes('密码')) {
+                        this.loginErrors.username = ' ';
+                        this.loginErrors.password = ' ';
+                    }
+                    return;
+                }
+
+                // 登录成功
+                this.authToken = data.token || '';
+                if (this.authToken) {
+                    localStorage.setItem('admin_token', this.authToken);
+                }
+
+                this.loginAlert = '登录成功，正在进入...';
+                this.loginAlertType = 'success';
+
+                // 延迟一下让用户看到成功提示
+                setTimeout(() => {
+                    this.isLoggedIn = true;
+                    this.loginAlert = '';
+                    this.loginForm = { username: '', password: '' };
+                    this.loadStats();
+                    this.loadSessions();
+                }, 500);
+
+            } catch (e) {
+                console.error('Login error:', e);
+                if (e.message && (e.message.includes('Failed to fetch') || e.message.includes('NetworkError'))) {
+                    this.loginAlert = '网络连接失败，请检查服务器是否运行';
+                } else {
+                    this.loginAlert = e.message || '登录失败，请稍后重试';
+                }
+                this.loginAlertType = 'error';
+            } finally {
+                this.loginLoading = false;
+            }
+        },
+
+        async verifyLogin() {
+            try {
+                const res = await fetch(this.API_BASE + '/api/auth/verify', {
+                    headers: { 'Authorization': 'Bearer ' + this.authToken }
+                });
+                if (res.ok) {
+                    this.isLoggedIn = true;
+                    this.loadStats();
+                    this.loadSessions();
+                } else {
+                    this.authToken = '';
+                    localStorage.removeItem('admin_token');
+                }
+            } catch (e) {
+                // 验证失败也不强制退出，可能是后端未启动
+                console.warn('Login verify failed:', e);
+                // 如果本地有 token，先让用户看到主界面，等调用API时再由 401 处理
+                this.isLoggedIn = !!this.authToken;
+                if (this.isLoggedIn) {
+                    this.loadStats();
+                    this.loadSessions();
+                }
+            }
+        },
+
+        async logout() {
+            try {
+                if (this.authToken) {
+                    await fetch(this.API_BASE + '/api/auth/logout', {
+                        method: 'POST',
+                        headers: { 'Authorization': 'Bearer ' + this.authToken }
+                    }).catch(() => {});
+                }
+            } finally {
+                this.authToken = '';
+                this.isLoggedIn = false;
+                localStorage.removeItem('admin_token');
+                this.loginForm = { username: '', password: '' };
+                this.loginAlert = '已退出登录';
+                this.loginAlertType = 'success';
+                this.disconnectWs();
+                // 清理页面数据
+                this.sessions = [];
+                this.messages = [];
+                this.stats = {};
+            }
         },
 
         // 检查后端状态
@@ -764,16 +1103,40 @@ function adminApp() {
         // ===== API调用封装 =====
         async apiCall(url, options = {}) {
             try {
+                const headers = { 'Content-Type': 'application/json', ...options.headers };
+                if (this.authToken) {
+                    headers['Authorization'] = 'Bearer ' + this.authToken;
+                }
                 const res = await fetch(this.API_BASE + url, {
-                    headers: { 'Content-Type': 'application/json', ...options.headers },
+                    headers,
                     ...options
                 });
+                // 401 未授权 → 清除登录态并跳转到登录页
+                if (res.status === 401) {
+                    this.authToken = '';
+                    this.isLoggedIn = false;
+                    localStorage.removeItem('admin_token');
+                    this.loginAlert = '登录已过期，请重新登录';
+                    this.loginAlertType = 'error';
+                    throw new Error('登录已过期');
+                }
                 if (!res.ok) {
-                    const errText = await res.text().catch(() => '请求失败');
-                    throw new Error(errText || `HTTP ${res.status}`);
+                    let errText = '';
+                    try {
+                        const errData = await res.json();
+                        errText = errData.detail || errData.message || errData.error || '';
+                    } catch {
+                        errText = await res.text().catch(() => '');
+                    }
+                    if (!errText) errText = `请求失败 (HTTP ${res.status})`;
+                    throw new Error(errText);
                 }
                 return await res.json();
             } catch (e) {
+                // 网络异常处理
+                if (e.name === 'TypeError' || (e.message && e.message.includes('Failed to fetch'))) {
+                    throw new Error('网络连接失败，请检查服务器是否运行');
+                }
                 throw e;
             }
         },
