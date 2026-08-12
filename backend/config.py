@@ -11,7 +11,9 @@ DEFAULT_CONFIG = {
     "zhipu_model": "glm-4-flash",
     "system_prompt": "你是一个专业的电商客服助手，根据知识库中的信息回答用户问题。如果知识库中没有相关信息，请礼貌地告知用户并建议联系人工客服。回答要简洁、准确、友好。",
     "welcome_message": "您好！我是AI客服助手，请问有什么可以帮您？",
-    "company_name": "我的公司"
+    "company_name": "我的公司",
+    "admin_username": "admin",
+    "admin_password": "admin123"
 }
 
 
@@ -66,4 +68,6 @@ def get_masked_config() -> dict:
         config["zhipu_api_key"] = api_key[:2] + "*" * (len(api_key) - 4) + api_key[-2:]
     elif api_key:
         config["zhipu_api_key"] = "****"
+    # 不返回管理员密码
+    config.pop("admin_password", None)
     return config
